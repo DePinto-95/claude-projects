@@ -21,6 +21,7 @@ canvas {
 </head>
 <body>
 <canvas id="c"></canvas>
+<script src="/socket.io/socket.io.js"></script>
 <script>
 'use strict';
 
@@ -71,6 +72,22 @@ window.addEventListener('keydown', e => {
   if (!keys[e.code]) keyPressed[e.code] = true;
   keys[e.code] = true;
   if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+
+  // Capture room-code typing in lobby join mode
+  if (game.state === States.LOBBY && lobby.mode === 'join') {
+    if (e.code === 'Backspace') {
+      lobby.typedCode = lobby.typedCode.slice(0, -1);
+      lobby.error = '';
+      e.preventDefault();
+    } else if (e.code === 'Enter') {
+      tryJoinRoom();
+      e.preventDefault();
+    } else if (/^[A-Z0-9]$/i.test(e.key) && lobby.typedCode.length < 4) {
+      lobby.typedCode += e.key.toUpperCase();
+      lobby.error = '';
+      e.preventDefault();
+    }
+  }
 });
 window.addEventListener('keyup',   e => { keys[e.code] = false; });
 canvas.addEventListener('mousemove', e => {
@@ -647,6 +664,8 @@ function updatePlayer(dt) {
     player.fireCooldown = wep.fireRate;
     player.shotsFired++;
     game.muzzleFlash = 0.07;
+    if (game.isOnline && net.socket)
+      net.socket.emit('player_fire', { angle: ga, weaponKey: player.weapons[player.weaponIndex] });
   }
 
   player.damageFlash = Math.max(0, player.damageFlash - dt);
@@ -1119,10 +1138,12 @@ function resetGroundItems() {
 }
 
 function updateGroundItems(dt) {
-  itemSpawnTimer -= dt;
-  if (itemSpawnTimer <= 0) {
-    itemSpawnTimer = rnd(12, 20);
-    spawnGroundItem();
+  if (!game.isOnline) {
+    itemSpawnTimer -= dt;
+    if (itemSpawnTimer <= 0) {
+      itemSpawnTimer = rnd(12, 20);
+      spawnGroundItem();
+    }
   }
   for (const item of groundItems) {
     if (!item.alive) continue;
@@ -1130,12 +1151,27 @@ function updateGroundItems(dt) {
     if (dist(player.x, player.y, item.x, item.y) < 22) {
       pickupItem(item);
       item.alive = false;
-    } else if (game.state === States.PVP && bot.alive && dist(bot.x, bot.y, item.x, item.y) < 22) {
+      if (game.isOnline && net.socket && item.id !== undefined)
+        net.socket.emit('pickup_item', { id: item.id });
+    } else if (!game.isOnline && game.state === States.PVP && bot.alive && dist(bot.x, bot.y, item.x, item.y) < 22) {
       pickupItemBot(item);
       item.alive = false;
     }
   }
   groundItems.splice(0, groundItems.length, ...groundItems.filter(i => i.alive));
+}
+
+function updateOnlineItems(dt) {
+  for (const item of onlineItems) {
+    if (!item.alive) continue;
+    item.bobTime += dt * 2.5;
+    if (dist(player.x, player.y, item.x, item.y) < 22) {
+      pickupItem(item);
+      item.alive = false;
+      if (net.socket) net.socket.emit('pickup_item', { id: item.id });
+    }
+  }
+  onlineItems.splice(0, onlineItems.length, ...onlineItems.filter(i => i.alive));
 }
 
 function spawnGroundItem() {
@@ -1301,6 +1337,49 @@ function damagePlayer(amount) {
   }
 }
 
+function checkCollisionsOnline() {
+  // Our bullets hit opponent (optimistic local display; opponent is authoritative for their HP)
+  for (const b of bullets) {
+    if (!b.alive || b.owner !== 'player') continue;
+    if (bot.alive && aabb(b, { x: bot.x, y: bot.y, w: bot.w, h: bot.h })) {
+      b.alive = false;
+      spawnHitSplash(b.x, b.y, COL.BOT);
+      bot.hp = Math.max(0, bot.hp - b.damage);
+    }
+  }
+  // Opponent bullets (owner='bot') hit our player — we are authoritative for our own HP
+  if (player.iframes <= 0) {
+    for (const b of bullets) {
+      if (!b.alive || b.owner !== 'bot') continue;
+      if (aabb(b, { x: player.x, y: player.y, w: player.w, h: player.h })) {
+        b.alive = false;
+        spawnHitSplash(b.x, b.y, COL.PLAYER);
+        damagePlayerOnline(b.damage);
+      }
+    }
+  }
+}
+
+function damagePlayerOnline(amount) {
+  player.hp -= amount;
+  player.damageFlash = 0.25;
+  player.iframes = 0.4;
+  if (net.socket) net.socket.emit('player_hp', { hp: player.hp });
+  if (player.hp <= 0) {
+    player.hp = 0;
+    player.alive = false;
+    pvp.playerLives--;
+    spawnExplosion(player.x, player.y, COL.PLAYER, 24);
+    if (pvp.playerLives <= 0) {
+      pvp.winner = 'bot';
+      if (net.socket) net.socket.emit('game_over', { winner: 'opponent' });
+      setState(States.PVP_OVER);
+    } else {
+      if (net.socket) net.socket.emit('player_died');
+    }
+  }
+}
+
 function checkCollisionsPvp() {
   for (const b of bullets) {
     if (!b.alive) continue;
@@ -1362,7 +1441,7 @@ function damageBotPvp(amount) {
 // ============================================================
 // [GAME STATE]
 // ============================================================
-const States = { MENU: 'MENU', PLAYING: 'PLAYING', LEVEL_COMPLETE: 'LEVEL_COMPLETE', GAME_OVER: 'GAME_OVER', PVP: 'PVP', PVP_OVER: 'PVP_OVER' };
+const States = { MENU: 'MENU', PLAYING: 'PLAYING', LEVEL_COMPLETE: 'LEVEL_COMPLETE', GAME_OVER: 'GAME_OVER', PVP: 'PVP', PVP_OVER: 'PVP_OVER', LOBBY: 'LOBBY' };
 
 const game = {
   state: States.MENU,
@@ -1377,7 +1456,23 @@ const game = {
   waveFlash: 0,
   bgScrollX: 0,
   bgScrollY: 0,
+  isOnline: false,
 };
+
+// ── Online multiplayer state ───────────────────────────────────
+const net = {
+  socket:    null,
+  connected: false,
+  roomCode:  null,
+  playerIndex: null,   // 0 = left, 1 = right
+  stateTimer:  0,      // throttle for state broadcasts
+};
+const lobby = {
+  mode:      null,     // null | 'create' | 'join'
+  typedCode: '',
+  error:     '',
+};
+const onlineItems = []; // server-spawned ground items
 
 const pvp = {
   playerLives: 3,
@@ -1425,7 +1520,7 @@ function setState(s) {
       localStorage.setItem('tds_hi', game.highScore);
     }
   }
-  if (s === States.PVP) {
+  if (s === States.PVP && !game.isOnline) {
     enemies.length = 0;
     bullets.length = 0;
     pool.forEach(p => p.alive = false);
@@ -1439,6 +1534,19 @@ function setState(s) {
     player.x = W * 0.25; player.y = H * 0.5;
     resetBot();
     resetPvp();
+  }
+  if (s === States.LOBBY) {
+    game.isOnline = false;
+    enemies.length = 0;
+    bullets.length = 0;
+    pool.forEach(p => p.alive = false);
+    onlineItems.length = 0;
+    initOnline();
+  }
+  if (s === States.MENU) {
+    game.isOnline = false;
+    if (net.socket) { net.socket.disconnect(); net.socket = null; net.connected = false; }
+    lobby.mode = null; lobby.typedCode = ''; lobby.error = '';
   }
 }
 
@@ -1744,8 +1852,20 @@ function drawMenu(ctx, t) {
   ctx.font = 'bold 22px monospace';
   ctx.fillText('[ START GAME ]', W/2, by + 32);
 
-  // PvP button
-  const pvpBw = 220, pvpBh = 48, pvpBx = W/2 - pvpBw/2, pvpBy = 370;
+  // Online PvP button
+  const onlBw = 220, onlBh = 48, onlBx = W/2 - onlBw/2, onlBy = 370;
+  const onlHover = btnHit(onlBx, onlBy, onlBw, onlBh);
+  ctx.fillStyle = onlHover ? 'rgba(0,204,255,0.25)' : 'rgba(0,204,255,0.05)';
+  ctx.fillRect(onlBx, onlBy, onlBw, onlBh);
+  ctx.strokeStyle = COL.PLAYER;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(onlBx, onlBy, onlBw, onlBh);
+  ctx.fillStyle = COL.PLAYER;
+  ctx.font = 'bold 22px monospace';
+  ctx.fillText('[ ONLINE PvP ]', W/2, onlBy + 32);
+
+  // Local PvP button
+  const pvpBw = 220, pvpBh = 48, pvpBx = W/2 - pvpBw/2, pvpBy = 430;
   const pvpHover = btnHit(pvpBx, pvpBy, pvpBw, pvpBh);
   ctx.fillStyle = pvpHover ? 'rgba(255,102,0,0.25)' : 'rgba(255,102,0,0.05)';
   ctx.fillRect(pvpBx, pvpBy, pvpBw, pvpBh);
@@ -1759,7 +1879,7 @@ function drawMenu(ctx, t) {
   // High score
   ctx.fillStyle = '#445544';
   ctx.font = '13px monospace';
-  ctx.fillText(`BEST SCORE: ${pad(game.highScore)}`, W/2, 435);
+  ctx.fillText(`BEST SCORE: ${pad(game.highScore)}`, W/2, 496);
 
   ctx.fillStyle = '#333';
   ctx.font = '11px monospace';
@@ -1968,6 +2088,278 @@ function drawPvpOver(ctx, t) {
 }
 
 // ============================================================
+// [ONLINE MULTIPLAYER]
+// ============================================================
+function initOnline() {
+  if (net.socket) { net.socket.disconnect(); net.socket = null; }
+
+  net.socket = io(window.location.origin);
+
+  net.socket.on('connect', () => {
+    net.connected = true;
+    net.roomCode  = null;
+    net.playerIndex = null;
+  });
+
+  net.socket.on('room_created', ({ code }) => {
+    net.roomCode    = code;
+    lobby.mode      = 'waiting';
+  });
+
+  net.socket.on('join_error', ({ msg }) => {
+    lobby.error = msg;
+  });
+
+  net.socket.on('game_start', ({ yourIndex }) => {
+    net.playerIndex = yourIndex;
+    onlineItems.length = 0;
+    enemies.length = 0;
+    bullets.length = 0;
+    pool.forEach(p => p.alive = false);
+    scorePopups.length = 0;
+    resetPlayer();
+    resetBot();
+    resetPvp();
+    game.muzzleFlash = 0;
+    game.isOnline = true;
+    // Player 0 starts left, player 1 starts right
+    if (yourIndex === 0) {
+      player.x = W * 0.25; player.y = H * 0.5;
+      bot.x    = W * 0.75; bot.y    = H * 0.5;
+    } else {
+      player.x = W * 0.75; player.y = H * 0.5;
+      bot.x    = W * 0.25; bot.y    = H * 0.5;
+    }
+    game.state = States.PVP;
+  });
+
+  net.socket.on('opponent_state', data => {
+    bot.x          = data.x;
+    bot.y          = data.y;
+    bot.bodyAngle  = data.bodyAngle;
+    bot.gunAngle   = data.gunAngle;
+    bot.walkFrame  = data.walkFrame;
+    bot.isMoving   = data.isMoving;
+    bot.weapons    = data.weapons;
+    bot.weaponIndex = data.weaponIndex;
+    bot.alive      = data.alive;
+    if (data.hp !== undefined) bot.hp = data.hp;
+  });
+
+  net.socket.on('opponent_fire', data => {
+    const wep = WEAPONS[data.weaponKey];
+    if (!wep) return;
+    const gx = bot.x + Math.cos(data.angle) * 22;
+    const gy = bot.y + Math.sin(data.angle) * 22;
+    for (let i = 0; i < wep.pellets; i++) {
+      const a = data.angle + (wep.pellets > 1
+        ? rnd(-wep.spread/2, wep.spread/2)
+        : rnd(-wep.spread, wep.spread));
+      bullets.push(createBullet(gx, gy, a, 'bot', wep));
+    }
+    spawnMuzzleFlash(gx, gy, data.angle);
+  });
+
+  net.socket.on('opponent_hp', ({ hp }) => { bot.hp = hp; });
+
+  net.socket.on('opponent_died', () => {
+    if (!bot.alive) return;
+    bot.alive = false;
+    pvp.botLives--;
+    spawnExplosion(bot.x, bot.y, COL.BOT, 24);
+  });
+
+  net.socket.on('round_reset', () => {
+    bullets.length = 0;
+    pool.forEach(p => p.alive = false);
+    onlineItems.length = 0;
+    resetPlayer();
+    resetBot();
+    if (net.playerIndex === 0) {
+      player.x = W * 0.25; player.y = H * 0.5;
+      bot.x    = W * 0.75; bot.y    = H * 0.5;
+    } else {
+      player.x = W * 0.75; player.y = H * 0.5;
+      bot.x    = W * 0.25; bot.y    = H * 0.5;
+    }
+    player.iframes = 1.5;
+    bot.iframes    = 1.5;
+    bot.alive      = true;
+  });
+
+  net.socket.on('pvp_over', ({ winner }) => {
+    pvp.winner = winner; // 'player' or 'bot'
+    setState(States.PVP_OVER);
+  });
+
+  net.socket.on('item_spawn', item => {
+    onlineItems.push({ ...item, alive: true, bobTime: rnd(0, Math.PI * 2) });
+  });
+
+  net.socket.on('item_removed', ({ id }) => {
+    const item = onlineItems.find(i => i.id === id);
+    if (item) item.alive = false;
+    onlineItems.splice(0, onlineItems.length, ...onlineItems.filter(i => i.alive));
+  });
+
+  net.socket.on('opponent_left', () => {
+    if (game.state === States.PVP || game.state === States.PVP_OVER) {
+      game.isOnline = false;
+      lobby.mode    = null;
+      lobby.error   = 'Opponent disconnected';
+      game.state    = States.LOBBY;
+    }
+  });
+
+  net.socket.on('disconnect', () => {
+    net.connected = false;
+    if (game.state === States.PVP) {
+      game.isOnline = false;
+      lobby.mode    = null;
+      game.state    = States.LOBBY;
+    }
+  });
+}
+
+function sendPlayerState() {
+  if (!net.socket || !net.connected) return;
+  net.socket.emit('player_state', {
+    x: player.x, y: player.y,
+    bodyAngle: player.bodyAngle,
+    gunAngle:  player.gunAngle,
+    walkFrame: player.walkFrame,
+    isMoving:  player.isMoving,
+    weapons:    player.weapons,
+    weaponIndex: player.weaponIndex,
+    hp:    player.hp,
+    alive: player.alive,
+  });
+}
+
+function tryJoinRoom() {
+  if (lobby.typedCode.length !== 4) { lobby.error = 'Enter a 4-letter code'; return; }
+  if (!net.connected)                { lobby.error = 'Not connected to server'; return; }
+  net.socket.emit('join_room', { code: lobby.typedCode });
+}
+
+function drawLobby(ctx, t) {
+  // Background
+  ctx.fillStyle = COL.BG;
+  ctx.fillRect(0, 0, W, H);
+  for (let y = 0; y < H; y += 4) { ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.fillRect(0, y, W, 1); }
+
+  ctx.textAlign = 'center';
+
+  // Title
+  ctx.shadowColor = COL.PLAYER; ctx.shadowBlur = 20;
+  ctx.fillStyle   = COL.PLAYER;
+  ctx.font        = 'bold 36px monospace';
+  ctx.fillText('ONLINE  PvP', W/2, 100);
+  ctx.shadowBlur  = 0;
+
+  // Connection status
+  ctx.font      = '13px monospace';
+  ctx.fillStyle = net.connected ? '#44ff44' : '#ff4444';
+  ctx.fillText(net.connected ? '● Connected to server' : '● Connecting…', W/2, 135);
+
+  if (!lobby.mode) {
+    // ── Initial choice ──────────────────────────────────────
+    const btns = [
+      { label: '[ CREATE ROOM ]', bx: W/2-220, by: 200, bw: 200, bh: 52, color: COL.GREEN },
+      { label: '[ JOIN  ROOM  ]', bx: W/2+20,  by: 200, bw: 200, bh: 52, color: COL.PLAYER },
+    ];
+    for (const b of btns) {
+      const hover = btnHit(b.bx, b.by, b.bw, b.bh);
+      ctx.fillStyle = hover ? `${b.color}44` : `${b.color}11`;
+      ctx.fillRect(b.bx, b.by, b.bw, b.bh);
+      ctx.strokeStyle = b.color; ctx.lineWidth = 2;
+      ctx.strokeRect(b.bx, b.by, b.bw, b.bh);
+      ctx.fillStyle = b.color; ctx.font = 'bold 16px monospace';
+      ctx.fillText(b.label, b.bx + b.bw/2, b.by + 33);
+    }
+
+    ctx.fillStyle = '#334433';
+    ctx.font = '12px monospace';
+    ctx.fillText('Create a room and share the code — or enter a code to join a friend.', W/2, 295);
+
+  } else if (lobby.mode === 'create' || lobby.mode === 'waiting') {
+    // ── Created room — show code ────────────────────────────
+    ctx.fillStyle = '#888'; ctx.font = '14px monospace';
+    ctx.fillText('Share this code with your friend:', W/2, 195);
+
+    ctx.fillStyle = COL.GOLD;
+    ctx.font      = 'bold 64px monospace';
+    ctx.shadowColor = COL.GOLD; ctx.shadowBlur = 18;
+    ctx.fillText(net.roomCode || '…', W/2, 275);
+    ctx.shadowBlur = 0;
+
+    const pulse = 0.5 + 0.5 * Math.sin(t * 2.5);
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = '#aaa'; ctx.font = '16px monospace';
+    ctx.fillText('Waiting for opponent…', W/2, 325);
+    ctx.globalAlpha = 1;
+
+    // Cancel button
+    const cbx = W/2-80, cby = 370, cbw = 160, cbh = 40;
+    ctx.fillStyle = btnHit(cbx, cby, cbw, cbh) ? 'rgba(255,0,0,0.2)' : 'rgba(255,0,0,0.05)';
+    ctx.fillRect(cbx, cby, cbw, cbh);
+    ctx.strokeStyle = '#ff3355'; ctx.lineWidth = 2; ctx.strokeRect(cbx, cby, cbw, cbh);
+    ctx.fillStyle = '#ff3355'; ctx.font = 'bold 14px monospace';
+    ctx.fillText('[ CANCEL ]', W/2, cby + 26);
+
+  } else if (lobby.mode === 'join') {
+    // ── Join room — code input ──────────────────────────────
+    ctx.fillStyle = '#888'; ctx.font = '14px monospace';
+    ctx.fillText('Type the 4-letter room code:', W/2, 195);
+
+    // Code display box
+    const bx = W/2 - 120, by = 215, bw = 240, bh = 60;
+    ctx.fillStyle = '#111'; ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = COL.PLAYER; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+
+    const display = lobby.typedCode + (Math.sin(t * 4) > 0 ? '|' : ' ');
+    ctx.fillStyle = COL.PLAYER; ctx.font = 'bold 36px monospace';
+    ctx.fillText(display.padEnd(5, ' '), W/2, by + 42);
+
+    ctx.fillStyle = '#555'; ctx.font = '11px monospace';
+    ctx.fillText('Type letters/numbers — Backspace to delete', W/2, 295);
+
+    // Error
+    if (lobby.error) {
+      ctx.fillStyle = '#ff4444'; ctx.font = '13px monospace';
+      ctx.fillText(lobby.error, W/2, 318);
+    }
+
+    // JOIN button
+    const jbx = W/2 - 80, jby = 335, jbw = 160, jbh = 44;
+    const jhover = btnHit(jbx, jby, jbw, jbh);
+    ctx.fillStyle = jhover ? 'rgba(0,204,255,0.25)' : 'rgba(0,204,255,0.05)';
+    ctx.fillRect(jbx, jby, jbw, jbh);
+    ctx.strokeStyle = COL.PLAYER; ctx.lineWidth = 2; ctx.strokeRect(jbx, jby, jbw, jbh);
+    ctx.fillStyle = COL.PLAYER; ctx.font = 'bold 16px monospace';
+    ctx.fillText('[ JOIN ]', W/2, jby + 28);
+
+    // Cancel button
+    const cbx = W/2-60, cby = 393, cbw = 120, cbh = 36;
+    ctx.fillStyle = btnHit(cbx, cby, cbw, cbh) ? 'rgba(255,0,0,0.2)' : 'rgba(255,0,0,0.05)';
+    ctx.fillRect(cbx, cby, cbw, cbh);
+    ctx.strokeStyle = '#ff3355'; ctx.lineWidth = 2; ctx.strokeRect(cbx, cby, cbw, cbh);
+    ctx.fillStyle = '#ff3355'; ctx.font = 'bold 13px monospace';
+    ctx.fillText('[ CANCEL ]', W/2, cby + 24);
+  }
+
+  // Back to menu
+  const mbx = W/2-80, mby = H - 55, mbw = 160, mbh = 36;
+  ctx.fillStyle = btnHit(mbx, mby, mbw, mbh) ? 'rgba(100,100,100,0.25)' : 'rgba(100,100,100,0.05)';
+  ctx.fillRect(mbx, mby, mbw, mbh);
+  ctx.strokeStyle = '#444'; ctx.lineWidth = 2; ctx.strokeRect(mbx, mby, mbw, mbh);
+  ctx.fillStyle = '#666'; ctx.font = 'bold 13px monospace';
+  ctx.fillText('[ MAIN MENU ]', W/2, mby + 24);
+
+  ctx.textAlign = 'left';
+}
+
+// ============================================================
 // [LOOP]
 // ============================================================
 let lastTime = 0;
@@ -1988,10 +2380,9 @@ function loop(ts) {
       drawMenu(ctx, gameTime);
       // Btn interaction
       if (mouse.clicked) {
-        const bw = 220, bh = 48, bx = W/2-bw/2, by = 310;
-        if (btnHit(bx, by, bw, bh)) startGame();
-        const pvpBw = 220, pvpBh = 48, pvpBx = W/2-pvpBw/2, pvpBy = 370;
-        if (btnHit(pvpBx, pvpBy, pvpBw, pvpBh)) startPvp();
+        if (btnHit(W/2-110, 310, 220, 48)) startGame();
+        if (btnHit(W/2-110, 370, 220, 48)) setState(States.LOBBY);
+        if (btnHit(W/2-110, 430, 220, 48)) startPvp();
       }
       break;
 
@@ -2047,47 +2438,86 @@ function loop(ts) {
       }
       break;
 
+    case States.LOBBY:
+      drawLobby(ctx, gameTime);
+      if (mouse.clicked) {
+        if (!lobby.mode) {
+          if (btnHit(W/2-220, 200, 200, 52) && net.connected) { lobby.mode = 'create'; net.socket.emit('create_room'); }
+          if (btnHit(W/2+20,  200, 200, 52) && net.connected) { lobby.mode = 'join'; lobby.typedCode = ''; lobby.error = ''; }
+        } else if (lobby.mode === 'create' || lobby.mode === 'waiting') {
+          if (btnHit(W/2-80, 370, 160, 40)) { lobby.mode = null; lobby.error = ''; }
+        } else if (lobby.mode === 'join') {
+          if (btnHit(W/2-80, 335, 160, 44)) tryJoinRoom();
+          if (btnHit(W/2-60, 393, 120, 36)) { lobby.mode = null; lobby.typedCode = ''; lobby.error = ''; }
+        }
+        if (btnHit(W/2-80, H-55, 160, 36)) setState(States.MENU);
+      }
+      break;
+
     case States.PVP:
       drawBG(ctx, gameTime);
       game.bgScrollX += player.isMoving ? 1 : 0;
       game.bgScrollY += player.isMoving ? 0.5 : 0;
 
-      // Respawn countdown — reset BOTH when timer expires
-      if (pvp.respawnTimer > 0) {
-        pvp.respawnTimer -= dt;
-        if (pvp.respawnTimer <= 0) {
-          pvp.respawnTimer = 0;
-          player.hp = player.maxHp; player.alive = true;
-          player.x = W * 0.25; player.y = H * 0.5;
-          player.iframes = 1.5; player.damageFlash = 0;
-          player.weapons = ['pistol']; player.weaponIndex = 0;
-          bot.hp = bot.maxHp; bot.alive = true;
-          bot.x = W * 0.75; bot.y = H * 0.5;
-          bot.iframes = 1.5; bot.damageFlash = 0;
-          bot.weapons = ['pistol']; bot.weaponIndex = 0;
+      if (game.isOnline) {
+        // ── Online PvP ──────────────────────────────────────
+        net.stateTimer -= dt;
+        if (net.stateTimer <= 0) { net.stateTimer = 0.05; sendPlayerState(); }
+
+        if (player.alive) updatePlayer(dt);
+        updateBullets(dt);
+        updateParticles(dt);
+        updateOnlineItems(dt);
+        if (player.alive && bot.alive) checkCollisionsOnline();
+
+        // Draw online items using the existing drawGroundItems function
+        const _saved = groundItems.splice(0);
+        groundItems.push(...onlineItems);
+        drawGroundItems(ctx);
+        groundItems.splice(0); groundItems.push(..._saved);
+
+        drawParticles(ctx);
+        drawBullets(ctx);
+        if (bot.alive) drawBot(ctx);
+        if (player.alive) drawPlayer(ctx);
+        drawPvpHud(ctx);
+      } else {
+        // ── Local PvP vs bot ────────────────────────────────
+        if (pvp.respawnTimer > 0) {
+          pvp.respawnTimer -= dt;
+          if (pvp.respawnTimer <= 0) {
+            pvp.respawnTimer = 0;
+            player.hp = player.maxHp; player.alive = true;
+            player.x = W * 0.25; player.y = H * 0.5;
+            player.iframes = 1.5; player.damageFlash = 0;
+            player.weapons = ['pistol']; player.weaponIndex = 0;
+            bot.hp = bot.maxHp; bot.alive = true;
+            bot.x = W * 0.75; bot.y = H * 0.5;
+            bot.iframes = 1.5; bot.damageFlash = 0;
+            bot.weapons = ['pistol']; bot.weaponIndex = 0;
+          }
         }
+        if (player.alive) updatePlayer(dt);
+        updateBot(dt);
+        updateBullets(dt);
+        updateParticles(dt);
+        updateGroundItems(dt);
+        if (player.alive && bot.alive) checkCollisionsPvp();
+
+        drawGroundItems(ctx);
+        drawParticles(ctx);
+        drawBullets(ctx);
+        if (bot.alive) drawBot(ctx);
+        if (player.alive) drawPlayer(ctx);
+        drawPvpHud(ctx);
       }
-
-      if (player.alive) updatePlayer(dt);
-      updateBot(dt);
-      updateBullets(dt);
-      updateParticles(dt);
-      updateGroundItems(dt);
-      if (player.alive && bot.alive) checkCollisionsPvp();
-
-      drawGroundItems(ctx);
-      drawParticles(ctx);
-      drawBullets(ctx);
-      if (bot.alive) drawBot(ctx);
-      if (player.alive) drawPlayer(ctx);
-      drawPvpHud(ctx);
       break;
 
     case States.PVP_OVER:
       drawPvpOver(ctx, gameTime);
       if (mouse.clicked) {
         const pvpBtns = [
-          { bx: W/2-110, by: H/2+55,  bw: 220, bh: 44, action: () => startPvp() },
+          { bx: W/2-110, by: H/2+55,  bw: 220, bh: 44, action: () => game.isOnline ? setState(States.LOBBY) : startPvp() },
           { bx: W/2-100, by: H/2+111, bw: 200, bh: 40, action: () => setState(States.MENU) },
         ];
         for (const btn of pvpBtns) {
