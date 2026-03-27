@@ -54,6 +54,10 @@ const COL = {
   SHOOTER:   '#9C27B0',
   TANK:      '#607D8B',
   DRONE:     '#00BCD4',
+  // Bot (player 2) colors
+  BOT:       '#ff6600',
+  BOT2:      '#883300',
+  BOT_LEG:   '#442200',
 };
 
 // ============================================================
@@ -82,9 +86,10 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 // [WEAPONS]
 // ============================================================
 const WEAPONS = {
-  pistol:  { name: 'PISTOL',  damage: 25, fireRate: 0.13, pellets: 1, spread: 0,    speed: 620, color: '#ffff00', bulletW: 5, bulletH: 3 },
-  shotgun: { name: 'SHOTGUN', damage: 22, fireRate: 0.65, pellets: 5, spread: 0.28, speed: 520, color: '#ff8800', bulletW: 5, bulletH: 3 },
-  smg:     { name: 'SMG',     damage: 10, fireRate: 0.07, pellets: 1, spread: 0.10, speed: 700, color: '#00ffff', bulletW: 4, bulletH: 2 },
+  pistol:  { name: 'PISTOL',  damage: 25,  fireRate: 0.13, pellets: 1, spread: 0,    speed: 620,  color: '#ffff00', bulletW: 5, bulletH: 3 },
+  shotgun: { name: 'SHOTGUN', damage: 35,  fireRate: 0.65, pellets: 5, spread: 0.28, speed: 520,  color: '#ff8800', bulletW: 5, bulletH: 3, lifetime: 0.38 },
+  smg:     { name: 'SMG',     damage: 10,  fireRate: 0.07, pellets: 1, spread: 0.10, speed: 700,  color: '#00ffff', bulletW: 4, bulletH: 2 },
+  sniper:  { name: 'SNIPER',  damage: 120, fireRate: 1.4,  pellets: 1, spread: 0,    speed: 1100, color: '#ff00ff', bulletW: 8, bulletH: 2 },
 };
 
 // ============================================================
@@ -214,7 +219,7 @@ function createBullet(x, y, angle, owner, wep = null) {
     w: bw, h: bh,
     owner, damage, color,
     alive: true,
-    lifetime: 1.6,
+    lifetime: wep ? (wep.lifetime ?? 1.6) : 1.6,
   };
 }
 
@@ -239,7 +244,7 @@ function drawBullets(ctx) {
     ctx.fillRect(-Math.round(b.w/2), -Math.round(b.h/2), b.w, b.h);
     // Glow
     ctx.globalAlpha = 0.35;
-    ctx.fillStyle = b.owner === 'player' ? '#ffff88' : '#ff8800';
+    ctx.fillStyle = (b.owner === 'player' || b.owner === 'bot') ? '#ffff88' : '#ff8800';
     ctx.fillRect(-Math.round(b.w/2)-1, -Math.round(b.h/2)-1, b.w+2, b.h+2);
     ctx.globalAlpha = 1;
     ctx.restore();
@@ -723,6 +728,15 @@ function drawPlayer(ctx) {
     ctx.fillRect(6, -2, 2, 4); // mag
     ctx.fillStyle = '#001122';
     ctx.fillRect(24, -3, 3, 6);
+  } else if (curWep.name === 'SNIPER') {
+    ctx.fillStyle = '#1a001a';
+    ctx.fillRect(6, -2, 26, 5);
+    ctx.fillStyle = '#660066';
+    ctx.fillRect(7, -1, 24, 3);
+    ctx.fillStyle = '#cc00cc';
+    ctx.fillRect(8, -2, 3, 5); // scope block
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(30, -3, 3, 7); // muzzle
   } else { // pistol
     ctx.fillStyle = '#333344';
     ctx.fillRect(6, -3, 14, 5);
@@ -748,6 +762,220 @@ function drawPlayer(ctx) {
 }
 
 const PLAYER_LEG_COLOR = '#334466';
+
+// ============================================================
+// [BOT]
+// ============================================================
+let bot = {};
+
+function resetBot() {
+  bot.x = W * 0.75; bot.y = H * 0.5;
+  bot.w = 20; bot.h = 20; bot.spd = 155;
+  bot.hp = 100; bot.maxHp = 100;
+  bot.gunAngle = Math.PI; bot.bodyAngle = Math.PI;
+  bot.fireCooldown = 0;
+  bot.walkFrame = 0; bot.walkTimer = 0;
+  bot.walkFrameDuration = 0.11; bot.isMoving = true;
+  bot.damageFlash = 0; bot.iframes = 0; bot.alive = true;
+  bot.weapons = ['pistol']; bot.weaponIndex = 0;
+  bot.aiState = 'chase'; bot.strafeDir = 1;
+  bot.stateTimer = 0; bot.reactionDelay = rnd(0.5, 1.0);
+}
+
+function updateBot(dt) {
+  if (!bot.alive) return;
+  bot.fireCooldown  = Math.max(0, bot.fireCooldown  - dt);
+  bot.damageFlash   = Math.max(0, bot.damageFlash   - dt);
+  bot.iframes       = Math.max(0, bot.iframes       - dt);
+
+  const dx = player.x - bot.x;
+  const dy = player.y - bot.y;
+  const d  = Math.hypot(dx, dy) || 1;
+
+  // State machine
+  bot.stateTimer -= dt;
+  if (bot.stateTimer <= 0) {
+    if (d < 130) {
+      bot.aiState = 'retreat';
+      bot.strafeDir = Math.random() < 0.5 ? 1 : -1;
+      bot.stateTimer = rnd(0.6, 1.1);
+    } else if (d > 340) {
+      bot.aiState = 'chase';
+      bot.stateTimer = rnd(0.8, 1.4);
+    } else {
+      bot.aiState = 'strafe';
+      bot.strafeDir = Math.random() < 0.5 ? 1 : -1;
+      bot.stateTimer = rnd(0.7, 1.3);
+    }
+  }
+
+  // Movement
+  const toA = Math.atan2(dy, dx);
+  let mvAngle = toA;
+  if (bot.aiState === 'retreat') mvAngle = toA + Math.PI;
+  else if (bot.aiState === 'strafe') mvAngle = toA + Math.PI / 2 * bot.strafeDir;
+
+  bot.isMoving = true;
+  bot.bodyAngle = lerpAngle(bot.bodyAngle, mvAngle, 10 * dt);
+  bot.x += Math.cos(mvAngle) * bot.spd * dt;
+  bot.y += Math.sin(mvAngle) * bot.spd * dt;
+  bot.walkTimer += dt;
+  if (bot.walkTimer >= bot.walkFrameDuration) {
+    bot.walkTimer -= bot.walkFrameDuration;
+    bot.walkFrame = (bot.walkFrame + 1) % 4;
+  }
+  bot.x = clamp(bot.x, 14, W - 14);
+  bot.y = clamp(bot.y, 14, H - 14);
+
+  // Aim at player with slight imprecision
+  const aimNoise = rnd(-0.04, 0.04);
+  bot.gunAngle = lerpAngle(bot.gunAngle, Math.atan2(dy, dx) + aimNoise, 6 * dt);
+
+  // Shoot when facing player
+  const aDiff = Math.abs(((bot.gunAngle - Math.atan2(dy, dx)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+  bot.reactionDelay = Math.max(0, bot.reactionDelay - dt);
+  const wep = WEAPONS[bot.weapons[bot.weaponIndex]];
+  if (bot.fireCooldown <= 0 && aDiff < 0.35 && d < 500) {
+    if (bot.reactionDelay <= 0) {
+      const ga = bot.gunAngle;
+      const gx = bot.x + Math.cos(ga) * 22;
+      const gy = bot.y + Math.sin(ga) * 22;
+      for (let i = 0; i < wep.pellets; i++) {
+        const angle = ga + (wep.pellets > 1 ? rnd(-wep.spread / 2, wep.spread / 2) : rnd(-wep.spread, wep.spread));
+        bullets.push(createBullet(gx, gy, angle, 'bot', wep));
+      }
+      spawnMuzzleFlash(gx, gy, ga);
+      bot.fireCooldown = wep.fireRate;
+      bot.reactionDelay = rnd(0.18, 0.45);
+    }
+  } else if (bot.fireCooldown <= 0) {
+    bot.reactionDelay = rnd(0.08, 0.25);
+  }
+}
+
+function pickupItemBot(item) {
+  if (item.type === 'health') {
+    bot.hp = Math.min(bot.maxHp, bot.hp + 30);
+    scorePopups.push({ x: item.x, y: item.y - 10, text: 'BOT +30 HP', life: 1.2 });
+    for (let i = 0; i < 10; i++) {
+      const a = rnd(0, Math.PI * 2);
+      spawnParticle(item.x, item.y, Math.cos(a)*80, Math.sin(a)*80, 0.4, 3, '#44ff44', 0);
+    }
+  } else {
+    const wn = item.weaponType;
+    if (bot.weapons.includes(wn)) {
+      scorePopups.push({ x: item.x, y: item.y - 10, text: 'BOT HAS IT', life: 0.8 });
+      return;
+    }
+    if (bot.weapons.length < 3) {
+      bot.weapons.push(wn);
+      bot.weaponIndex = bot.weapons.length - 1;
+    } else {
+      bot.weapons[bot.weaponIndex] = wn;
+    }
+    scorePopups.push({ x: item.x, y: item.y - 10, text: 'BOT: ' + WEAPONS[wn].name, life: 1.5 });
+    for (let i = 0; i < 10; i++) {
+      const a = rnd(0, Math.PI * 2);
+      spawnParticle(item.x, item.y, Math.cos(a)*80, Math.sin(a)*80, 0.4, 3, WEAPONS[wn].color, 0);
+    }
+  }
+}
+
+function drawBot(ctx) {
+  ctx.save();
+  ctx.translate(Math.round(bot.x), Math.round(bot.y));
+
+  const bob = bot.isMoving ? Math.sin(bot.walkTimer * Math.PI * 2 / bot.walkFrameDuration * 4) * 1.5 : 0;
+
+  ctx.save();
+  ctx.rotate(bot.bodyAngle);
+  ctx.translate(0, Math.round(bob));
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(-10+3, 8, 20, 5);
+
+  // Legs
+  const legOffsets = [{ l:4,r:0},{l:2,r:2},{l:0,r:4},{l:2,r:2}];
+  const lo = legOffsets[bot.walkFrame];
+  ctx.fillStyle = COL.BOT_LEG;
+  ctx.fillRect(-8, lo.l, 5, 7);
+  ctx.fillRect(3,  lo.r, 5, 7);
+
+  // Torso
+  ctx.fillStyle = COL.BOT2;
+  ctx.fillRect(-8, -10, 16, 14);
+  ctx.fillStyle = COL.BOT;
+  ctx.fillRect(-7, -9, 14, 12);
+  ctx.fillStyle = COL.BOT2;
+  ctx.fillRect(-2, -9, 4, 5);
+
+  // Head
+  ctx.fillStyle = COL.BOT2;
+  ctx.fillRect(-5, -19, 10, 10);
+  ctx.fillStyle = '#ffe0c0';
+  ctx.fillRect(-4, -18, 8, 8);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(-3, -16, 2, 2);
+  ctx.fillRect(1, -16, 2, 2);
+
+  ctx.restore();
+
+  // Gun arm
+  ctx.save();
+  ctx.rotate(bot.gunAngle);
+  const curWep = WEAPONS[bot.weapons[bot.weaponIndex]];
+  ctx.fillStyle = '#ffe0c0';
+  ctx.fillRect(2, -3, 8, 5);
+  if (curWep.name === 'SHOTGUN') {
+    ctx.fillStyle = '#443322';
+    ctx.fillRect(6, -4, 16, 8);
+    ctx.fillStyle = '#887755';
+    ctx.fillRect(7, -3, 14, 6);
+    ctx.fillStyle = '#554433';
+    ctx.fillRect(8, -2, 10, 2);
+    ctx.fillStyle = '#222211';
+    ctx.fillRect(20, -5, 5, 10);
+  } else if (curWep.name === 'SMG') {
+    ctx.fillStyle = '#112233';
+    ctx.fillRect(6, -2, 20, 4);
+    ctx.fillStyle = '#004466';
+    ctx.fillRect(7, -1, 18, 2);
+    ctx.fillStyle = '#00ffff';
+    ctx.fillRect(6, -2, 2, 4);
+    ctx.fillStyle = '#001122';
+    ctx.fillRect(24, -3, 3, 6);
+  } else if (curWep.name === 'SNIPER') {
+    ctx.fillStyle = '#1a001a';
+    ctx.fillRect(6, -2, 26, 5);
+    ctx.fillStyle = '#660066';
+    ctx.fillRect(7, -1, 24, 3);
+    ctx.fillStyle = '#cc00cc';
+    ctx.fillRect(8, -2, 3, 5);
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(30, -3, 3, 7);
+  } else {
+    ctx.fillStyle = '#333344';
+    ctx.fillRect(6, -3, 14, 5);
+    ctx.fillStyle = '#666677';
+    ctx.fillRect(7, -2, 12, 2);
+    ctx.fillStyle = '#222233';
+    ctx.fillRect(18, -4, 4, 7);
+  }
+  ctx.fillStyle = curWep.color;
+  ctx.fillRect(8, -4, 3, 2);
+  ctx.restore();
+
+  // Damage flash
+  if (bot.damageFlash > 0) {
+    ctx.globalAlpha = bot.damageFlash * 0.6;
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(-10, -20, 20, 30);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
 
 // ============================================================
 // [SPAWNER]
@@ -902,6 +1130,9 @@ function updateGroundItems(dt) {
     if (dist(player.x, player.y, item.x, item.y) < 22) {
       pickupItem(item);
       item.alive = false;
+    } else if (game.state === States.PVP && bot.alive && dist(bot.x, bot.y, item.x, item.y) < 22) {
+      pickupItemBot(item);
+      item.alive = false;
     }
   }
   groundItems.splice(0, groundItems.length, ...groundItems.filter(i => i.alive));
@@ -915,7 +1146,7 @@ function spawnGroundItem() {
 
   const isWeapon = Math.random() < 0.55;
   if (isWeapon) {
-    const wepTypes = ['shotgun', 'smg'];
+    const wepTypes = ['shotgun', 'smg', 'sniper'];
     const weaponType = wepTypes[rndInt(0, wepTypes.length)];
     groundItems.push({ x, y, type: 'weapon', weaponType, alive: true, bobTime: rnd(0, Math.PI*2) });
   } else {
@@ -1070,10 +1301,68 @@ function damagePlayer(amount) {
   }
 }
 
+function checkCollisionsPvp() {
+  for (const b of bullets) {
+    if (!b.alive) continue;
+    if (b.owner === 'player' && bot.alive && bot.iframes <= 0) {
+      if (aabb(b, { x: bot.x, y: bot.y, w: bot.w, h: bot.h })) {
+        b.alive = false;
+        spawnHitSplash(b.x, b.y, COL.BOT);
+        damageBotPvp(b.damage);
+        continue;
+      }
+    }
+    if (b.owner === 'bot' && player.alive && player.iframes <= 0) {
+      if (aabb(b, { x: player.x, y: player.y, w: player.w, h: player.h })) {
+        b.alive = false;
+        spawnHitSplash(b.x, b.y, COL.PLAYER);
+        damagePlayerPvp(b.damage);
+        continue;
+      }
+    }
+  }
+}
+
+function damagePlayerPvp(amount) {
+  player.hp -= amount;
+  player.damageFlash = 0.25;
+  player.iframes = 0.4;
+  if (player.hp <= 0) {
+    player.hp = 0;
+    player.alive = false;
+    pvp.playerLives--;
+    spawnExplosion(player.x, player.y, COL.PLAYER, 24);
+    if (pvp.playerLives <= 0) {
+      pvp.winner = 'bot';
+      setState(States.PVP_OVER);
+    } else {
+      pvp.respawnTimer = 2.5;
+    }
+  }
+}
+
+function damageBotPvp(amount) {
+  bot.hp -= amount;
+  bot.damageFlash = 0.25;
+  bot.iframes = 0.4;
+  if (bot.hp <= 0) {
+    bot.hp = 0;
+    bot.alive = false;
+    pvp.botLives--;
+    spawnExplosion(bot.x, bot.y, COL.BOT, 24);
+    if (pvp.botLives <= 0) {
+      pvp.winner = 'player';
+      setState(States.PVP_OVER);
+    } else {
+      pvp.respawnTimer = 2.5;
+    }
+  }
+}
+
 // ============================================================
 // [GAME STATE]
 // ============================================================
-const States = { MENU: 'MENU', PLAYING: 'PLAYING', LEVEL_COMPLETE: 'LEVEL_COMPLETE', GAME_OVER: 'GAME_OVER' };
+const States = { MENU: 'MENU', PLAYING: 'PLAYING', LEVEL_COMPLETE: 'LEVEL_COMPLETE', GAME_OVER: 'GAME_OVER', PVP: 'PVP', PVP_OVER: 'PVP_OVER' };
 
 const game = {
   state: States.MENU,
@@ -1089,6 +1378,20 @@ const game = {
   bgScrollX: 0,
   bgScrollY: 0,
 };
+
+const pvp = {
+  playerLives: 3,
+  botLives: 3,
+  respawnTimer: 0,
+  winner: null,
+};
+
+function resetPvp() {
+  pvp.playerLives = 3;
+  pvp.botLives = 3;
+  pvp.respawnTimer = 0;
+  pvp.winner = null;
+}
 
 function setState(s) {
   game.state = s;
@@ -1122,6 +1425,25 @@ function setState(s) {
       localStorage.setItem('tds_hi', game.highScore);
     }
   }
+  if (s === States.PVP) {
+    enemies.length = 0;
+    bullets.length = 0;
+    pool.forEach(p => p.alive = false);
+    scorePopups.length = 0;
+    game.muzzleFlash = 0;
+    game.waveFlash = 0;
+    frameCount = 0;
+    resetGroundItems();
+    itemSpawnTimer = 6;
+    resetPlayer();
+    player.x = W * 0.25; player.y = H * 0.5;
+    resetBot();
+    resetPvp();
+  }
+}
+
+function startPvp() {
+  setState(States.PVP);
 }
 
 function startGame() {
@@ -1251,6 +1573,92 @@ function drawCrosshair(ctx, mx, my) {
   ctx.fillRect(mx-1, my-1, 2, 2);
 }
 
+function drawPvpHud(ctx) {
+  const barW = 180, barH = 18;
+
+  // Player health bar (left)
+  const pPct = Math.max(0, player.hp / player.maxHp);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(12, 12, barW, barH);
+  ctx.fillStyle = pPct > 0.6 ? '#4CAF50' : pPct > 0.3 ? '#FFC107' : '#F44336';
+  ctx.fillRect(12, 12, Math.round(barW * pPct), barH);
+  ctx.strokeStyle = COL.PLAYER;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(12, 12, barW, barH);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(`YOU  ${player.hp}/${player.maxHp}`, 16, 25);
+  // Player lives
+  ctx.fillStyle = COL.PLAYER;
+  ctx.font = 'bold 14px monospace';
+  let pLives = '';
+  for (let i = 0; i < 3; i++) pLives += i < pvp.playerLives ? '■' : '□';
+  ctx.fillText(pLives, 12, 48);
+
+  // Bot health bar (right)
+  const bPct = Math.max(0, bot.hp / bot.maxHp);
+  const brx = W - 12 - barW;
+  ctx.fillStyle = '#222';
+  ctx.fillRect(brx, 12, barW, barH);
+  ctx.fillStyle = bPct > 0.6 ? '#4CAF50' : bPct > 0.3 ? '#FFC107' : '#F44336';
+  ctx.fillRect(brx, 12, Math.round(barW * bPct), barH);
+  ctx.strokeStyle = COL.BOT;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(brx, 12, barW, barH);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`BOT  ${bot.hp}/${bot.maxHp}`, W - 16, 25);
+  ctx.fillStyle = COL.BOT;
+  ctx.font = 'bold 14px monospace';
+  let bLives = '';
+  for (let i = 0; i < 3; i++) bLives += i < pvp.botLives ? '■' : '□';
+  ctx.fillText(bLives, W - 12, 48);
+
+  // VS center label
+  ctx.fillStyle = '#555';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('VS', W/2, 26);
+
+  // Respawn overlay
+  if (pvp.respawnTimer > 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, H/2 - 44, W, 58);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`RESPAWNING IN ${Math.ceil(pvp.respawnTimer)}...`, W/2, H/2 - 10);
+  }
+
+  // Player weapon slots (bottom center)
+  const slotW = 110, slotH = 34, slotGap = 6;
+  const totalSlotW = player.weapons.length * slotW + (player.weapons.length - 1) * slotGap;
+  let sx = W/2 - totalSlotW/2;
+  const sy = H - 46;
+  for (let i = 0; i < player.weapons.length; i++) {
+    const wslot = WEAPONS[player.weapons[i]];
+    const active = i === player.weaponIndex;
+    const wx = sx + i * (slotW + slotGap);
+    ctx.fillStyle = active ? 'rgba(0,0,0,0.85)' : 'rgba(0,0,0,0.45)';
+    ctx.fillRect(wx, sy, slotW, slotH);
+    ctx.strokeStyle = active ? wslot.color : '#333344';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.strokeRect(wx, sy, slotW, slotH);
+    ctx.fillStyle = active ? wslot.color : '#333';
+    ctx.fillRect(wx, sy, 4, slotH);
+    ctx.fillStyle = active ? wslot.color : '#555';
+    ctx.font = `${active ? 'bold ' : ''}11px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`[${i+1}] ${wslot.name}`, wx + slotW/2 + 2, sy + 21);
+    ctx.textAlign = 'left';
+  }
+
+  ctx.textAlign = 'left';
+  drawCrosshair(ctx, mouse.x, mouse.y);
+}
+
 // ============================================================
 // [SCREENS]
 // ============================================================
@@ -1336,10 +1744,22 @@ function drawMenu(ctx, t) {
   ctx.font = 'bold 22px monospace';
   ctx.fillText('[ START GAME ]', W/2, by + 32);
 
+  // PvP button
+  const pvpBw = 220, pvpBh = 48, pvpBx = W/2 - pvpBw/2, pvpBy = 370;
+  const pvpHover = btnHit(pvpBx, pvpBy, pvpBw, pvpBh);
+  ctx.fillStyle = pvpHover ? 'rgba(255,102,0,0.25)' : 'rgba(255,102,0,0.05)';
+  ctx.fillRect(pvpBx, pvpBy, pvpBw, pvpBh);
+  ctx.strokeStyle = COL.BOT;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(pvpBx, pvpBy, pvpBw, pvpBh);
+  ctx.fillStyle = COL.BOT;
+  ctx.font = 'bold 22px monospace';
+  ctx.fillText('[ PVP  MODE ]', W/2, pvpBy + 32);
+
   // High score
   ctx.fillStyle = '#445544';
   ctx.font = '13px monospace';
-  ctx.fillText(`BEST SCORE: ${pad(game.highScore)}`, W/2, 405);
+  ctx.fillText(`BEST SCORE: ${pad(game.highScore)}`, W/2, 435);
 
   ctx.fillStyle = '#333';
   ctx.font = '11px monospace';
@@ -1499,6 +1919,54 @@ function drawGameOver(ctx, t) {
   ctx.textAlign = 'left';
 }
 
+function drawPvpOver(ctx, t) {
+  ctx.fillStyle = '#08080f';
+  ctx.fillRect(0, 0, W, H);
+  for (let y = 0; y < H; y += 4) {
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(0, y, W, 1);
+  }
+
+  const isPlayerWin = pvp.winner === 'player';
+  const winColor = isPlayerWin ? COL.PLAYER : COL.BOT;
+  const winLabel = isPlayerWin ? 'YOU WIN!' : 'BOT WINS!';
+
+  const scale = 1 + 0.018 * Math.sin(t * 3);
+  ctx.save();
+  ctx.translate(W/2, H/2 - 90);
+  ctx.scale(scale, scale);
+  ctx.shadowColor = winColor;
+  ctx.shadowBlur = 30;
+  ctx.fillStyle = winColor;
+  ctx.font = 'bold 62px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(winLabel, 0, 0);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#aaa';
+  ctx.font = '15px monospace';
+  ctx.fillText(`Player lives: ${pvp.playerLives}   Bot lives: ${pvp.botLives}`, W/2, H/2 + 10);
+
+  const btns = [
+    { label: '[ PLAY AGAIN ]', bx: W/2-110, by: H/2+55,  bw: 220, bh: 44, action: () => startPvp() },
+    { label: '[ MAIN MENU ]',  bx: W/2-100, by: H/2+111, bw: 200, bh: 40, action: () => setState(States.MENU) },
+  ];
+  for (const btn of btns) {
+    const hover = btnHit(btn.bx, btn.by, btn.bw, btn.bh);
+    ctx.fillStyle = hover ? 'rgba(100,150,255,0.2)' : 'rgba(100,100,100,0.05)';
+    ctx.fillRect(btn.bx, btn.by, btn.bw, btn.bh);
+    ctx.strokeStyle = winColor;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(btn.bx, btn.by, btn.bw, btn.bh);
+    ctx.fillStyle = winColor;
+    ctx.font = 'bold 17px monospace';
+    ctx.fillText(btn.label, btn.bx + btn.bw/2, btn.by + 27);
+  }
+  ctx.textAlign = 'left';
+}
+
 // ============================================================
 // [LOOP]
 // ============================================================
@@ -1512,8 +1980,8 @@ function loop(ts) {
 
   ctx.clearRect(0, 0, W, H);
 
-  // Cursor: hide only during play (custom crosshair)
-  canvas.style.cursor = game.state === States.PLAYING ? 'none' : 'default';
+  // Cursor: hide during play states (custom crosshair)
+  canvas.style.cursor = (game.state === States.PLAYING || game.state === States.PVP) ? 'none' : 'default';
 
   switch (game.state) {
     case States.MENU:
@@ -1522,6 +1990,8 @@ function loop(ts) {
       if (mouse.clicked) {
         const bw = 220, bh = 48, bx = W/2-bw/2, by = 310;
         if (btnHit(bx, by, bw, bh)) startGame();
+        const pvpBw = 220, pvpBh = 48, pvpBx = W/2-pvpBw/2, pvpBy = 370;
+        if (btnHit(pvpBx, pvpBy, pvpBw, pvpBh)) startPvp();
       }
       break;
 
@@ -1572,6 +2042,55 @@ function loop(ts) {
           { bx: W/2-100, by: H/2+165, bw: 200, bh: 40, action: () => { game.state = States.MENU; } },
         ];
         for (const btn of btns) {
+          if (btnHit(btn.bx, btn.by, btn.bw, btn.bh)) { btn.action(); break; }
+        }
+      }
+      break;
+
+    case States.PVP:
+      drawBG(ctx, gameTime);
+      game.bgScrollX += player.isMoving ? 1 : 0;
+      game.bgScrollY += player.isMoving ? 0.5 : 0;
+
+      // Respawn countdown — reset BOTH when timer expires
+      if (pvp.respawnTimer > 0) {
+        pvp.respawnTimer -= dt;
+        if (pvp.respawnTimer <= 0) {
+          pvp.respawnTimer = 0;
+          player.hp = player.maxHp; player.alive = true;
+          player.x = W * 0.25; player.y = H * 0.5;
+          player.iframes = 1.5; player.damageFlash = 0;
+          player.weapons = ['pistol']; player.weaponIndex = 0;
+          bot.hp = bot.maxHp; bot.alive = true;
+          bot.x = W * 0.75; bot.y = H * 0.5;
+          bot.iframes = 1.5; bot.damageFlash = 0;
+          bot.weapons = ['pistol']; bot.weaponIndex = 0;
+        }
+      }
+
+      if (player.alive) updatePlayer(dt);
+      updateBot(dt);
+      updateBullets(dt);
+      updateParticles(dt);
+      updateGroundItems(dt);
+      if (player.alive && bot.alive) checkCollisionsPvp();
+
+      drawGroundItems(ctx);
+      drawParticles(ctx);
+      drawBullets(ctx);
+      if (bot.alive) drawBot(ctx);
+      if (player.alive) drawPlayer(ctx);
+      drawPvpHud(ctx);
+      break;
+
+    case States.PVP_OVER:
+      drawPvpOver(ctx, gameTime);
+      if (mouse.clicked) {
+        const pvpBtns = [
+          { bx: W/2-110, by: H/2+55,  bw: 220, bh: 44, action: () => startPvp() },
+          { bx: W/2-100, by: H/2+111, bw: 200, bh: 40, action: () => setState(States.MENU) },
+        ];
+        for (const btn of pvpBtns) {
           if (btnHit(btn.bx, btn.by, btn.bw, btn.bh)) { btn.action(); break; }
         }
       }
