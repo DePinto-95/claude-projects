@@ -121,12 +121,11 @@ io.on('connection', socket => {
     }, 2500);
   });
 
-  // One side's lives hit 0 → broadcast pvp_over to both
-  socket.on('game_over', ({ winner }) => {
+  // Sender's lives hit 0 → they lost; opponent won
+  socket.on('game_over', () => {
     if (!socket.roomCode) return;
-    // 'self' means sender won; translate for each recipient
-    socket.emit('pvp_over',             { winner: 'player' });
-    socket.to(socket.roomCode).emit('pvp_over', { winner: 'bot' });
+    socket.emit('pvp_over',             { winner: 'bot'    }); // sender lost
+    socket.to(socket.roomCode).emit('pvp_over', { winner: 'player' }); // opponent won
   });
 
   // Item picked up → remove from server map + tell opponent

@@ -1372,9 +1372,10 @@ function damagePlayerOnline(amount) {
     spawnExplosion(player.x, player.y, COL.PLAYER, 24);
     if (pvp.playerLives <= 0) {
       pvp.winner = 'bot';
-      if (net.socket) net.socket.emit('game_over', { winner: 'opponent' });
+      if (net.socket) net.socket.emit('game_over');
       setState(States.PVP_OVER);
     } else {
+      pvp.roundResult = 'lost';
       if (net.socket) net.socket.emit('player_died');
     }
   }
@@ -1415,6 +1416,7 @@ function damagePlayerPvp(amount) {
       pvp.winner = 'bot';
       setState(States.PVP_OVER);
     } else {
+      pvp.roundResult = 'lost';
       pvp.respawnTimer = 2.5;
     }
   }
@@ -1433,6 +1435,7 @@ function damageBotPvp(amount) {
       pvp.winner = 'player';
       setState(States.PVP_OVER);
     } else {
+      pvp.roundResult = 'won';
       pvp.respawnTimer = 2.5;
     }
   }
@@ -1479,6 +1482,7 @@ const pvp = {
   botLives: 3,
   respawnTimer: 0,
   winner: null,
+  roundResult: null,  // 'won' | 'lost' — shown during respawn countdown
 };
 
 function resetPvp() {
@@ -1486,6 +1490,7 @@ function resetPvp() {
   pvp.botLives = 3;
   pvp.respawnTimer = 0;
   pvp.winner = null;
+  pvp.roundResult = null;
 }
 
 function setState(s) {
@@ -1730,14 +1735,20 @@ function drawPvpHud(ctx) {
   ctx.textAlign = 'center';
   ctx.fillText('VS', W/2, 26);
 
-  // Respawn overlay
-  if (pvp.respawnTimer > 0) {
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(0, H/2 - 44, W, 58);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 20px monospace';
+  // Round result + respawn overlay
+  const showRound = pvp.respawnTimer > 0 || (game.isOnline && (!player.alive || !bot.alive));
+  if (showRound && pvp.roundResult) {
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(0, H/2 - 64, W, 90);
+    ctx.font = 'bold 30px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(`RESPAWNING IN ${Math.ceil(pvp.respawnTimer)}...`, W/2, H/2 - 10);
+    ctx.fillStyle = pvp.roundResult === 'won' ? '#44ff88' : '#ff4444';
+    ctx.fillText(pvp.roundResult === 'won' ? 'You won' : 'You lose', W/2, H/2 - 28);
+    if (pvp.respawnTimer > 0) {
+      ctx.fillStyle = '#aaa';
+      ctx.font = '15px monospace';
+      ctx.fillText(`Respawning in ${Math.ceil(pvp.respawnTimer)}...`, W/2, H/2);
+    }
   }
 
   // Player weapon slots (bottom center)
@@ -2049,7 +2060,7 @@ function drawPvpOver(ctx, t) {
 
   const isPlayerWin = pvp.winner === 'player';
   const winColor = isPlayerWin ? COL.PLAYER : COL.BOT;
-  const winLabel = isPlayerWin ? 'YOU WIN!' : 'BOT WINS!';
+  const winLabel = isPlayerWin ? 'Won the game!' : 'Lost the game';
 
   const scale = 1 + 0.018 * Math.sin(t * 3);
   ctx.save();
@@ -2166,10 +2177,12 @@ function initOnline() {
     if (!bot.alive) return;
     bot.alive = false;
     pvp.botLives--;
+    pvp.roundResult = 'won';
     spawnExplosion(bot.x, bot.y, COL.BOT, 24);
   });
 
   net.socket.on('round_reset', () => {
+    pvp.roundResult = null;
     bullets.length = 0;
     pool.forEach(p => p.alive = false);
     onlineItems.length = 0;
@@ -2487,6 +2500,7 @@ function loop(ts) {
           pvp.respawnTimer -= dt;
           if (pvp.respawnTimer <= 0) {
             pvp.respawnTimer = 0;
+            pvp.roundResult = null;
             player.hp = player.maxHp; player.alive = true;
             player.x = W * 0.25; player.y = H * 0.5;
             player.iframes = 1.5; player.damageFlash = 0;
