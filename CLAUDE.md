@@ -53,12 +53,20 @@ Each game is a single file with all HTML, CSS, and JavaScript inline. The JS ins
 
 ## Git Workflow
 
-After every meaningful change: commit with a clean message and push.
+**This is a strict requirement:** commit and push to GitHub after every meaningful unit of work — a new feature, a bug fix, a refactor, or any change the user would want to be able to revert to. Never leave work uncommitted at the end of a task.
 
 ```bash
 git add <changed files>
-git commit -m "descriptive message"
+git commit -m "short imperative summary
+
+Optional longer explanation if needed."
 git push
 ```
+
+Commit message rules:
+- Use the imperative mood: "Add X", "Fix Y", "Refactor Z" — not "Added" or "Adding"
+- First line ≤ 72 characters, describes *what* changed
+- If the why isn't obvious, add a blank line then a brief explanation
+- Always append `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`
 
 Remote: https://github.com/DePinto-95/claude-projects
