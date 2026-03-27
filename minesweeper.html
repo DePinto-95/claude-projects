@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minesweeper</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Segoe UI', sans-serif;
+      color: #eee;
+    }
+
+    h1 {
+      font-size: 2rem;
+      letter-spacing: 4px;
+      margin-bottom: 16px;
+      color: #e94560;
+      text-transform: uppercase;
+    }
+
+    #controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    button.diff-btn {
+      padding: 6px 16px;
+      border: 2px solid #444;
+      background: #16213e;
+      color: #ccc;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    button.diff-btn:hover, button.diff-btn.active {
+      background: #e94560;
+      border-color: #e94560;
+      color: #fff;
+    }
+
+    #hud {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      background: #16213e;
+      border: 2px solid #0f3460;
+      border-radius: 10px;
+      padding: 10px 24px;
+      margin-bottom: 14px;
+      font-size: 1.1rem;
+      min-width: 280px;
+      justify-content: space-between;
+    }
+
+    #hud span { color: #e94560; font-weight: bold; }
+
+    #reset-btn {
+      font-size: 1.4rem;
+      background: none;
+      border: none;
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+    #reset-btn:hover { transform: scale(1.3); }
+
+    #board-wrap {
+      border: 3px solid #0f3460;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+
+    #board {
+      display: grid;
+      gap: 1px;
+      background: #0f3460;
+    }
+
+    .cell {
+      width: 32px;
+      height: 32px;
+      background: #16213e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: bold;
+      cursor: pointer;
+      user-select: none;
+      border: 1px solid #1a2a5e;
+      transition: background 0.1s;
+    }
+
+    .cell.covered {
+      background: #1e3a6e;
+      border: 1px solid #2a4a8e;
+    }
+
+    .cell.covered:hover {
+      background: #2a4a8e;
+    }
+
+    .cell.flagged { background: #1e3a6e; }
+    .cell.flagged::after { content: '🚩'; font-size: 1rem; }
+
+    .cell.question { background: #1e3a6e; }
+    .cell.question::after { content: '❓'; font-size: 1rem; }
+
+    .cell.revealed { cursor: default; }
+
+    .cell.mine-hit { background: #e94560 !important; }
+    .cell.mine-revealed { background: #12102a; }
+
+    .n1 { color: #4fc3f7; }
+    .n2 { color: #81c784; }
+    .n3 { color: #e57373; }
+    .n4 { color: #9575cd; }
+    .n5 { color: #ff8a65; }
+    .n6 { color: #4dd0e1; }
+    .n7 { color: #f06292; }
+    .n8 { color: #cfd8dc; }
+
+    #message {
+      margin-top: 14px;
+      font-size: 1.3rem;
+      height: 1.6rem;
+      font-weight: bold;
+      color: #e94560;
+      letter-spacing: 2px;
+    }
+
+    #best-times {
+      margin-top: 12px;
+      font-size: 0.78rem;
+      color: #667;
+      text-align: center;
+    }
+
+    #best-times span { color: #aaa; }
+  </style>
+</head>
+<body>
+
+<h1>Minesweeper</h1>
+
+<div id="controls">
+  <button class="diff-btn active" data-rows="9"  data-cols="9"  data-mines="10">Beginner</button>
+  <button class="diff-btn"        data-rows="16" data-cols="16" data-mines="40">Intermediate</button>
+  <button class="diff-btn"        data-rows="16" data-cols="30" data-mines="99">Expert</button>
+</div>
+
+<div id="hud">
+  <div>💣 <span id="mine-count">10</span></div>
+  <button id="reset-btn" title="New Game">🙂</button>
+  <div>⏱ <span id="timer">0</span>s</div>
+</div>
+
+<div id="board-wrap"><div id="board"></div></div>
+
+<div id="message"></div>
+<div id="best-times">Best — Beginner: <span id="best-b">—</span> | Intermediate: <span id="best-i">—</span> | Expert: <span id="best-e">—</span></div>
+
+<script>
+  const DIFFS = {
+    Beginner: { rows: 9, cols: 9, mines: 10, key: 'best-b' },
+    Intermediate: { rows: 16, cols: 16, mines: 40, key: 'best-i' },
+    Expert: { rows: 16, cols: 30, mines: 99, key: 'best-e' }
+  };
+
+  let rows, cols, mineCount, board, revealed, flagged, question,
+      gameOver, won, firstClick, timerInterval, elapsed, currentDiff;
+
+  const boardEl    = document.getElementById('board');
+  const mineEl     = document.getElementById('mine-count');
+  const timerEl    = document.getElementById('timer');
+  const resetBtn   = document.getElementById('reset-btn');
+  const messageEl  = document.getElementById('message');
+
+  // Load best times
+  function getBest(key) {
+    const v = localStorage.getItem(key);
+    return v ? parseInt(v) : null;
+  }
+  function setBest(key, val) {
+    const cur = getBest(key);
+    if (cur === null || val < cur) {
+      localStorage.setItem(key, val);
+      return true;
+    }
+    return false;
+  }
+  function refreshBestDisplay() {
+    Object.values(DIFFS).forEach(d => {
+      const el = document.getElementById(d.key);
+      const v = getBest(d.key);
+      el.textContent = v !== null ? v + 's' : '—';
+    });
+  }
+
+  function initGame(r, c, m, diff) {
+    rows = r; cols = c; mineCount = m; currentDiff = diff;
+    board = Array.from({length: rows}, () => Array(cols).fill(0));
+    revealed = Array.from({length: rows}, () => Array(cols).fill(false));
+    flagged  = Array.from({length: rows}, () => Array(cols).fill(false));
+    question = Array.from({length: rows}, () => Array(cols).fill(false));
+    gameOver = false; won = false; firstClick = true; elapsed = 0;
+    clearInterval(timerInterval);
+    timerEl.textContent = '0';
+    mineEl.textContent = mineCount;
+    messageEl.textContent = '';
+    resetBtn.textContent = '🙂';
+    renderBoard();
+  }
+
+  function placeMines(safeR, safeC) {
+    let placed = 0;
+    while (placed < mineCount) {
+      const r = Math.floor(Math.random() * rows);
+      const c = Math.floor(Math.random() * cols);
+      if (board[r][c] === -1) continue;
+      if (Math.abs(r - safeR) <= 1 && Math.abs(c - safeC) <= 1) continue;
+      board[r][c] = -1;
+      placed++;
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] === -1) continue;
+        board[r][c] = neighbors(r, c).filter(([nr, nc]) => board[nr][nc] === -1).length;
+      }
+    }
+  }
+
+  function neighbors(r, c) {
+    const res = [];
+    for (let dr = -1; dr <= 1; dr++)
+      for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols)
+          res.push([nr, nc]);
+      }
+    return res;
+  }
+
+  function renderBoard() {
+    boardEl.style.gridTemplateColumns = `repeat(${cols}, 32px)`;
+    boardEl.innerHTML = '';
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.r = r;
+        cell.dataset.c = c;
+
+        if (revealed[r][c]) {
+          cell.classList.add('revealed');
+          if (board[r][c] === -1) {
+            cell.classList.add('mine-revealed');
+            cell.textContent = '💣';
+          } else if (board[r][c] > 0) {
+            cell.textContent = board[r][c];
+            cell.classList.add('n' + board[r][c]);
+          }
+        } else if (flagged[r][c]) {
+          cell.classList.add('covered', 'flagged');
+        } else if (question[r][c]) {
+          cell.classList.add('covered', 'question');
+        } else {
+          cell.classList.add('covered');
+        }
+
+        cell.addEventListener('click', onLeftClick);
+        cell.addEventListener('contextmenu', onRightClick);
+        cell.addEventListener('dblclick', onDoubleClick);
+        boardEl.appendChild(cell);
+      }
+    }
+  }
+
+  function getRC(e) {
+    return [parseInt(e.currentTarget.dataset.r), parseInt(e.currentTarget.dataset.c)];
+  }
+
+  function onLeftClick(e) {
+    if (gameOver) return;
+    const [r, c] = getRC(e);
+    if (flagged[r][c] || question[r][c] || revealed[r][c]) return;
+
+    if (firstClick) {
+      firstClick = false;
+      placeMines(r, c);
+      timerInterval = setInterval(() => {
+        elapsed++;
+        timerEl.textContent = elapsed;
+      }, 1000);
+    }
+
+    reveal(r, c);
+    renderBoard();
+    checkWin();
+  }
+
+  function onRightClick(e) {
+    e.preventDefault();
+    if (gameOver) return;
+    const [r, c] = getRC(e);
+    if (revealed[r][c]) return;
+
+    if (!flagged[r][c] && !question[r][c]) {
+      flagged[r][c] = true;
+    } else if (flagged[r][c]) {
+      flagged[r][c] = false;
+      question[r][c] = true;
+    } else {
+      question[r][c] = false;
+    }
+
+    const flags = flagged.flat().filter(Boolean).length;
+    mineEl.textContent = mineCount - flags;
+    renderBoard();
+  }
+
+  function onDoubleClick(e) {
+    if (gameOver) return;
+    const [r, c] = getRC(e);
+    if (!revealed[r][c] || board[r][c] <= 0) return;
+    const nbrs = neighbors(r, c);
+    const flagCount = nbrs.filter(([nr, nc]) => flagged[nr][nc]).length;
+    if (flagCount === board[r][c]) {
+      nbrs.forEach(([nr, nc]) => {
+        if (!flagged[nr][nc] && !revealed[nr][nc]) reveal(nr, nc);
+      });
+      renderBoard();
+      checkWin();
+    }
+  }
+
+  function reveal(r, c) {
+    if (revealed[r][c] || flagged[r][c]) return;
+    revealed[r][c] = true;
+
+    if (board[r][c] === -1) {
+      // Hit a mine
+      gameOver = true;
+      clearInterval(timerInterval);
+      resetBtn.textContent = '😵';
+      messageEl.textContent = 'BOOM! Game Over.';
+      // Reveal all mines
+      for (let rr = 0; rr < rows; rr++)
+        for (let cc = 0; cc < cols; cc++)
+          if (board[rr][cc] === -1 && !flagged[rr][cc]) revealed[rr][cc] = true;
+      // Mark the clicked mine
+      setTimeout(() => {
+        const cells = boardEl.querySelectorAll('.cell');
+        const idx = r * cols + c;
+        cells[idx].classList.add('mine-hit');
+      }, 0);
+      return;
+    }
+
+    if (board[r][c] === 0) {
+      neighbors(r, c).forEach(([nr, nc]) => reveal(nr, nc));
+    }
+  }
+
+  function checkWin() {
+    if (gameOver) return;
+    const totalCells = rows * cols;
+    const revealedCount = revealed.flat().filter(Boolean).length;
+    if (revealedCount === totalCells - mineCount) {
+      won = true; gameOver = true;
+      clearInterval(timerInterval);
+      resetBtn.textContent = '😎';
+      const isRecord = setBest(currentDiff.key, elapsed);
+      messageEl.textContent = isRecord ? `YOU WIN! New best: ${elapsed}s 🏆` : `YOU WIN! Time: ${elapsed}s`;
+      refreshBestDisplay();
+      // Auto-flag remaining mines
+      for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++)
+          if (board[r][c] === -1) flagged[r][c] = true;
+      mineEl.textContent = 0;
+      renderBoard();
+    }
+  }
+
+  // Difficulty buttons
+  document.querySelectorAll('.diff-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const r = parseInt(btn.dataset.rows);
+      const c = parseInt(btn.dataset.cols);
+      const m = parseInt(btn.dataset.mines);
+      const diffName = btn.textContent;
+      initGame(r, c, m, DIFFS[diffName]);
+    });
+  });
+
+  resetBtn.addEventListener('click', () => {
+    const activeBtn = document.querySelector('.diff-btn.active');
+    const r = parseInt(activeBtn.dataset.rows);
+    const c = parseInt(activeBtn.dataset.cols);
+    const m = parseInt(activeBtn.dataset.mines);
+    const diffName = activeBtn.textContent;
+    initGame(r, c, m, DIFFS[diffName]);
+  });
+
+  // Start with beginner
+  refreshBestDisplay();
+  initGame(9, 9, 10, DIFFS['Beginner']);
+</script>
+</body>
+</html>
