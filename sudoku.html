@@ -374,76 +374,100 @@ function createPuzzle(solution, clueCount) {
 // [KILLER]
 // ============================================================
 function generateCages(solution) {
-  const cageOf = Array.from({length: 9}, () => Array(9).fill(-1));
-  const cages = [];
-  const allCells = shuffle(Array.from({length: 81}, (_, i) => [Math.floor(i / 9), i % 9]));
   const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+  // -1 = unassigned
+  const cageOf = Array.from({length: 9}, () => Array(9).fill(-1));
+  const cages   = [];
 
-  for (const [sr, sc] of allCells) {
-    if (cageOf[sr][sc] !== -1) continue;
-    const idx = cages.length;
+  // ── Step 1: grow cages in random cell order ──────────────────
+  // Each cage is flood-filled from a seed cell. The only constraint
+  // when picking the next cell to add is that its solution digit must
+  // not already appear anywhere in the current cage.
+  const order = shuffle(Array.from({length: 81}, (_, i) => [Math.floor(i/9), i%9]));
+
+  for (const [sr, sc] of order) {
+    if (cageOf[sr][sc] !== -1) continue;          // already in a cage
+
+    const idx        = cages.length;
     const targetSize = 2 + Math.floor(Math.random() * 4); // 2–5
-    const cells = [[sr, sc]];
-    cageOf[sr][sc] = idx;
+    const cells      = [[sr, sc]];
+    cageOf[sr][sc]   = idx;
 
     while (cells.length < targetSize) {
-      const candidates = [];
-      for (const [r, c] of cells)
+      // Digits already claimed by this cage
+      const used = new Set(cells.map(([r, c]) => solution[r][c]));
+
+      // Collect unique adjacent candidates that introduce a fresh digit.
+      // Use a flat-index Set to guarantee no cell appears twice.
+      const seen  = new Set();
+      const valid = [];
+      for (const [r, c] of cells) {
         for (const [dr, dc] of dirs) {
           const nr = r + dr, nc = c + dc;
-          if (nr >= 0 && nr < 9 && nc >= 0 && nc < 9 && cageOf[nr][nc] === -1)
-            candidates.push([nr, nc]);
+          const key = nr * 9 + nc;
+          if (nr >= 0 && nr < 9 && nc >= 0 && nc < 9
+              && cageOf[nr][nc] === -1          // not yet assigned
+              && !used.has(solution[nr][nc])    // digit not already in cage
+              && !seen.has(key)) {              // not already listed
+            seen.add(key);
+            valid.push([nr, nc]);
+          }
         }
-      if (!candidates.length) break;
-      const [nr, nc] = candidates[Math.floor(Math.random() * candidates.length)];
+      }
+
+      if (!valid.length) break;
+      const [nr, nc] = valid[Math.floor(Math.random() * valid.length)];
       cells.push([nr, nc]);
       cageOf[nr][nc] = idx;
     }
 
-    const sum = cells.reduce((s, [r, c]) => s + solution[r][c], 0);
-    cages.push({ cells, sum });
+    cages.push({ cells, sum: cells.reduce((s, [r, c]) => s + solution[r][c], 0) });
   }
 
-  // Merge any isolated single-cell cages into a neighbour cage (size <= 5)
+  // ── Step 2: absorb lone single-cell cages into a neighbour ───
+  // A 1-cell cage is valid but gives away the digit outright.
+  // Try to merge it into an adjacent cage that (a) has room (< 5),
+  // and (b) does not already contain the same digit.
   for (let r = 0; r < 9; r++) {
     for (let c = 0; c < 9; c++) {
       const idx = cageOf[r][c];
-      if (cages[idx].cells.length === 1) {
-        for (const [dr, dc] of dirs) {
-          const nr = r + dr, nc = c + dc;
-          if (nr < 0 || nr >= 9 || nc < 0 || nc >= 9) continue;
-          const nIdx = cageOf[nr][nc];
-          if (nIdx !== idx && cages[nIdx].cells.length < 5) {
-            cages[nIdx].cells.push([r, c]);
-            cages[nIdx].sum += solution[r][c];
-            cageOf[r][c] = nIdx;
-            cages[idx].cells = [];
-            break;
-          }
-        }
+      if (cages[idx].cells.length !== 1) continue;
+
+      const digit = solution[r][c];
+      for (const [dr, dc] of dirs) {
+        const nr = r + dr, nc = c + dc;
+        if (nr < 0 || nr >= 9 || nc < 0 || nc >= 9) continue;
+        const nIdx = cageOf[nr][nc];
+        if (nIdx === idx) continue;
+        if (cages[nIdx].cells.length >= 5) continue;
+        // Only merge if the digit won't repeat in the neighbour cage
+        const nUsed = new Set(cages[nIdx].cells.map(([cr, cc]) => solution[cr][cc]));
+        if (nUsed.has(digit)) continue;
+
+        cages[nIdx].cells.push([r, c]);
+        cages[nIdx].sum += digit;
+        cageOf[r][c]    = nIdx;
+        cages[idx].cells = [];     // mark original cage as empty
+        break;
       }
     }
   }
 
-  // Compact: remove empty cages and remap indices
-  const validCages = cages.filter(cage => cage.cells.length > 0);
-  const remap = {};
-  cages.forEach((cage, oldIdx) => {
-    if (cage.cells.length > 0) {
-      remap[oldIdx] = validCages.indexOf(cage);
-    }
-  });
+  // ── Step 3: compact — remove empty slots, remap cageOf ───────
+  const valid = cages.filter(g => g.cells.length > 0);
+  const remap  = new Map();
+  cages.forEach((g, i) => { if (g.cells.length > 0) remap.set(i, valid.indexOf(g)); });
   for (let r = 0; r < 9; r++)
     for (let c = 0; c < 9; c++)
-      cageOf[r][c] = remap[cageOf[r][c]] ?? cageOf[r][c];
+      cageOf[r][c] = remap.get(cageOf[r][c]) ?? cageOf[r][c];
 
-  // Find top-left cell for each cage's sum label
-  validCages.forEach(cage => {
-    cage.cells.sort((a, b) => a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1]);
-    cage.labelCell = cage.cells[0];
+  // ── Step 4: label cell = top-left cell of each cage ──────────
+  valid.forEach(g => {
+    g.cells.sort((a, b) => a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1]);
+    g.labelCell = g.cells[0];
   });
 
-  return { cages: validCages, cageOf };
+  return { cages: valid, cageOf };
 }
 
 function getCageBorders(r, c, cageOf) {
