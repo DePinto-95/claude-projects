@@ -100,6 +100,14 @@
       grid-template-rows: repeat(9, 56px);
       background: var(--bg3);
       gap: 1px;
+      position: relative;
+    }
+
+    #cage-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
     }
 
     .cell {
@@ -124,11 +132,6 @@
     .cell.box-right  { border-right: 3px solid #ffffff; }
     .cell.box-bottom { border-bottom: 3px solid #ffffff; }
 
-    /* Killer cage borders — thin dashed red, drawn slightly inside each cell */
-    .cell.cage-top    { border-top: 1px dashed var(--accent) !important; padding-top: 2px; }
-    .cell.cage-bottom { border-bottom: 1px dashed var(--accent) !important; padding-bottom: 2px; }
-    .cell.cage-left   { border-left: 1px dashed var(--accent) !important; padding-left: 2px; }
-    .cell.cage-right  { border-right: 1px dashed var(--accent) !important; padding-right: 2px; }
 
     .cell.given { color: var(--text); }
     .cell.user  { color: var(--cyan); }
@@ -575,15 +578,8 @@ function renderBoard() {
       if (r === 2 || r === 5) cell.classList.add('box-bottom');
       if (c === 2 || c === 5) cell.classList.add('box-right');
 
-      // Killer cage borders — thin dashed red classes
+      // Cage sum label for Killer mode (top-left cell of each cage)
       if (game.mode === 'killer') {
-        const b = getCageBorders(r, c, game.cageOf);
-        if (b.top)    cell.classList.add('cage-top');
-        if (b.bottom) cell.classList.add('cage-bottom');
-        if (b.left)   cell.classList.add('cage-left');
-        if (b.right)  cell.classList.add('cage-right');
-
-        // Cage sum label (top-left cell of each cage)
         const cage = game.cages[game.cageOf[r][c]];
         if (cage && cage.labelCell[0] === r && cage.labelCell[1] === c) {
           const label = document.createElement('span');
@@ -597,7 +593,58 @@ function renderBoard() {
       boardEl.appendChild(cell);
     }
   }
+  renderCageOverlay();
   refreshAllCells();
+}
+
+// ============================================================
+// [CAGE OVERLAY]
+// ============================================================
+function renderCageOverlay() {
+  // Remove any previous overlay
+  const old = document.getElementById('cage-overlay');
+  if (old) old.remove();
+  if (game.mode !== 'killer') return;
+
+  // Board pixel geometry: each cell is 56px, gap between cells is 1px
+  const CELL = 56, GAP = 1, STRIDE = CELL + GAP, INSET = 3;
+  const SIZE = 9 * CELL + 8 * GAP; // = 512
+
+  const pathParts = [];
+
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      const b = getCageBorders(r, c, game.cageOf);
+      const x0 = c * STRIDE;
+      const y0 = r * STRIDE;
+
+      // Draw each boundary side as an inset dashed segment.
+      // Horizontal segments run the full cell width; vertical the full height.
+      // They cross cleanly at cage corners.
+      if (b.top)    pathParts.push(`M${x0},${y0 + INSET}H${x0 + CELL}`);
+      if (b.bottom) pathParts.push(`M${x0},${y0 + CELL - INSET}H${x0 + CELL}`);
+      if (b.left)   pathParts.push(`M${x0 + INSET},${y0}V${y0 + CELL}`);
+      if (b.right)  pathParts.push(`M${x0 + CELL - INSET},${y0}V${y0 + CELL}`);
+    }
+  }
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.id = 'cage-overlay';
+  svg.setAttribute('width', SIZE);
+  svg.setAttribute('height', SIZE);
+
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', pathParts.join(' '));
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', '#e94560');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-dasharray', '4 3');
+  path.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(path);
+
+  // Insert BEFORE cells so cells and their labels render on top
+  boardEl.insertBefore(svg, boardEl.firstChild);
 }
 
 function refreshAllCells() {
