@@ -124,8 +124,11 @@
     .cell.box-right  { border-right: 3px solid #ffffff; }
     .cell.box-bottom { border-bottom: 3px solid #ffffff; }
 
-    /* Killer cage borders rendered via inset box-shadow (set inline in JS)
-       so the red line sits a few px inside the cell edge, not on it. */
+    /* Killer cage borders — thin dashed red, drawn slightly inside each cell */
+    .cell.cage-top    { border-top: 1px dashed var(--accent) !important; padding-top: 2px; }
+    .cell.cage-bottom { border-bottom: 1px dashed var(--accent) !important; padding-bottom: 2px; }
+    .cell.cage-left   { border-left: 1px dashed var(--accent) !important; padding-left: 2px; }
+    .cell.cage-right  { border-right: 1px dashed var(--accent) !important; padding-right: 2px; }
 
     .cell.given { color: var(--text); }
     .cell.user  { color: var(--cyan); }
@@ -142,7 +145,7 @@
       position: absolute;
       top: 2px;
       left: 3px;
-      font-size: 0.5rem;
+      font-size: 0.7rem;
       font-weight: bold;
       color: var(--accent);
       pointer-events: none;
@@ -572,15 +575,13 @@ function renderBoard() {
       if (r === 2 || r === 5) cell.classList.add('box-bottom');
       if (c === 2 || c === 5) cell.classList.add('box-right');
 
-      // Killer cage borders — inset box-shadow so red line sits inside the cell
+      // Killer cage borders — thin dashed red classes
       if (game.mode === 'killer') {
         const b = getCageBorders(r, c, game.cageOf);
-        const shadows = [];
-        if (b.top)    shadows.push('inset 0 3px 0 0 #e94560');
-        if (b.bottom) shadows.push('inset 0 -3px 0 0 #e94560');
-        if (b.left)   shadows.push('inset 3px 0 0 0 #e94560');
-        if (b.right)  shadows.push('inset -3px 0 0 0 #e94560');
-        if (shadows.length) cell.style.boxShadow = shadows.join(', ');
+        if (b.top)    cell.classList.add('cage-top');
+        if (b.bottom) cell.classList.add('cage-bottom');
+        if (b.left)   cell.classList.add('cage-left');
+        if (b.right)  cell.classList.add('cage-right');
 
         // Cage sum label (top-left cell of each cage)
         const cage = game.cages[game.cageOf[r][c]];
@@ -682,15 +683,25 @@ function enterDigit(d) {
     else notes.add(d);
   } else {
     if (game.grid[r][c] !== d) {
-      const prev = game.grid[r][c];
       game.grid[r][c] = d;
       if (isCellError(r, c) && d !== 0) {
         game.mistakes++;
         document.getElementById('mistakes').textContent = game.mistakes;
       }
     }
-    // Clear notes when entering a digit
+    // Clear notes in this cell
     game.notes[r][c].clear();
+    // If correct, remove this digit from notes in the same row, col, and box
+    if (d === game.solution[r][c]) {
+      const br = Math.floor(r / 3) * 3, bc = Math.floor(c / 3) * 3;
+      for (let i = 0; i < 9; i++) {
+        game.notes[r][i].delete(d);
+        game.notes[i][c].delete(d);
+      }
+      for (let dr = 0; dr < 3; dr++)
+        for (let dc = 0; dc < 3; dc++)
+          game.notes[br + dr][bc + dc].delete(d);
+    }
   }
 
   refreshAllCells();
