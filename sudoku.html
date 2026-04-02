@@ -119,10 +119,10 @@
     }
 
     /* Standard 3×3 box thick borders */
-    .cell.box-top    { border-top: 2px solid var(--text2); }
-    .cell.box-left   { border-left: 2px solid var(--text2); }
-    .cell.box-right  { border-right: 2px solid var(--text2); }
-    .cell.box-bottom { border-bottom: 2px solid var(--text2); }
+    .cell.box-top    { border-top: 3px solid #c8d0e0; }
+    .cell.box-left   { border-left: 3px solid #c8d0e0; }
+    .cell.box-right  { border-right: 3px solid #c8d0e0; }
+    .cell.box-bottom { border-bottom: 3px solid #c8d0e0; }
 
     /* Killer cage dashed borders */
     .cell.cage-top    { border-top: 1px dashed var(--accent); }
@@ -131,10 +131,10 @@
     .cell.cage-bottom { border-bottom: 1px dashed var(--accent); }
 
     /* Box borders override cage borders */
-    .cell.box-top.cage-top       { border-top: 2px solid var(--text2); }
-    .cell.box-left.cage-left     { border-left: 2px solid var(--text2); }
-    .cell.box-right.cage-right   { border-right: 2px solid var(--text2); }
-    .cell.box-bottom.cage-bottom { border-bottom: 2px solid var(--text2); }
+    .cell.box-top.cage-top       { border-top: 3px solid #c8d0e0; }
+    .cell.box-left.cage-left     { border-left: 3px solid #c8d0e0; }
+    .cell.box-right.cage-right   { border-right: 3px solid #c8d0e0; }
+    .cell.box-bottom.cage-bottom { border-bottom: 3px solid #c8d0e0; }
 
     .cell.given { color: var(--text); }
     .cell.user  { color: var(--cyan); }
@@ -728,7 +728,8 @@ document.addEventListener('keydown', e => {
     enterDigit(parseInt(e.key));
   } else if (e.key === 'Backspace' || e.key === 'Delete') {
     eraseCell();
-  } else if (e.key === 'n' || e.key === 'N') {
+  } else if (e.key === 'n' || e.key === 'N' || e.key === ' ') {
+    e.preventDefault();
     toggleNotes();
   } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown' ||
              e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
