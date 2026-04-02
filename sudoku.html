@@ -118,23 +118,23 @@
       border: 1px solid var(--bg3);
     }
 
-    /* Standard 3×3 box thick borders */
-    .cell.box-top    { border-top: 3px solid #c8d0e0; }
-    .cell.box-left   { border-left: 3px solid #c8d0e0; }
-    .cell.box-right  { border-right: 3px solid #c8d0e0; }
-    .cell.box-bottom { border-bottom: 3px solid #c8d0e0; }
+    /* Standard 3×3 box thick borders — both sides of each internal divider */
+    .cell.box-top    { border-top: 3px solid var(--accent); }
+    .cell.box-left   { border-left: 3px solid var(--accent); }
+    .cell.box-right  { border-right: 3px solid var(--accent); }
+    .cell.box-bottom { border-bottom: 3px solid var(--accent); }
 
     /* Killer cage dashed borders */
-    .cell.cage-top    { border-top: 1px dashed var(--accent); }
-    .cell.cage-left   { border-left: 1px dashed var(--accent); }
-    .cell.cage-right  { border-right: 1px dashed var(--accent); }
-    .cell.cage-bottom { border-bottom: 1px dashed var(--accent); }
+    .cell.cage-top    { border-top: 1px dashed #c8d0e0; }
+    .cell.cage-left   { border-left: 1px dashed #c8d0e0; }
+    .cell.cage-right  { border-right: 1px dashed #c8d0e0; }
+    .cell.cage-bottom { border-bottom: 1px dashed #c8d0e0; }
 
     /* Box borders override cage borders */
-    .cell.box-top.cage-top       { border-top: 3px solid #c8d0e0; }
-    .cell.box-left.cage-left     { border-left: 3px solid #c8d0e0; }
-    .cell.box-right.cage-right   { border-right: 3px solid #c8d0e0; }
-    .cell.box-bottom.cage-bottom { border-bottom: 3px solid #c8d0e0; }
+    .cell.box-top.cage-top       { border-top: 3px solid var(--accent); }
+    .cell.box-left.cage-left     { border-left: 3px solid var(--accent); }
+    .cell.box-right.cage-right   { border-right: 3px solid var(--accent); }
+    .cell.box-bottom.cage-bottom { border-bottom: 3px solid var(--accent); }
 
     .cell.given { color: var(--text); }
     .cell.user  { color: var(--cyan); }
@@ -574,11 +574,12 @@ function renderBoard() {
       cell.dataset.r = r;
       cell.dataset.c = c;
 
-      // Box boundaries (3×3 thick borders)
-      if (r % 3 === 0)     cell.classList.add('box-top');
-      if (c % 3 === 0)     cell.classList.add('box-left');
-      if (r === 8)          cell.classList.add('box-bottom');
-      if (c === 8)          cell.classList.add('box-right');
+      // Box boundaries — border on BOTH sides of each internal divider
+      // so the line appears centered over the gap between cells
+      if (r === 3 || r === 6) cell.classList.add('box-top');
+      if (c === 3 || c === 6) cell.classList.add('box-left');
+      if (r === 2 || r === 5) cell.classList.add('box-bottom');
+      if (c === 2 || c === 5) cell.classList.add('box-right');
 
       // Killer cage dashed borders
       if (game.mode === 'killer') {
