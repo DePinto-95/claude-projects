@@ -643,8 +643,8 @@ function renderCageOverlay() {
   path.setAttribute('stroke-linecap', 'round');
   svg.appendChild(path);
 
-  // Insert BEFORE cells so cells and their labels render on top
-  boardEl.insertBefore(svg, boardEl.firstChild);
+  // Append AFTER cells so SVG renders on top and lines are visible
+  boardEl.appendChild(svg);
 }
 
 function refreshAllCells() {
