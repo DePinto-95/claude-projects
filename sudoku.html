@@ -607,9 +607,10 @@ function renderCageOverlay() {
   if (game.mode !== 'killer') return;
 
   // Board pixel geometry: each cell is 56px, gap between cells is 1px
-  const CELL = 56, GAP = 1, STRIDE = CELL + GAP, INSET = 3;
+  const CELL = 56, GAP = 1, STRIDE = CELL + GAP, INSET = 5;
   const SIZE = 9 * CELL + 8 * GAP; // = 512
 
+  const LABEL_GAP = 12; // extra clearance on top/left lines for the cage sum label
   const pathParts = [];
 
   for (let r = 0; r < 9; r++) {
@@ -618,13 +619,31 @@ function renderCageOverlay() {
       const x0 = c * STRIDE;
       const y0 = r * STRIDE;
 
-      // Draw each boundary side as an inset dashed segment.
-      // Horizontal segments run the full cell width; vertical the full height.
-      // They cross cleanly at cage corners.
-      if (b.top)    pathParts.push(`M${x0},${y0 + INSET}H${x0 + CELL}`);
-      if (b.bottom) pathParts.push(`M${x0},${y0 + CELL - INSET}H${x0 + CELL}`);
-      if (b.left)   pathParts.push(`M${x0 + INSET},${y0}V${y0 + CELL}`);
-      if (b.right)  pathParts.push(`M${x0 + CELL - INSET},${y0}V${y0 + CELL}`);
+      // Trim each line so it stops at the corner intersection point,
+      // rather than running past and crossing the perpendicular line.
+      const xStart = x0 + (b.left   ? INSET : 0);
+      const xEnd   = x0 + CELL - (b.right  ? INSET : 0);
+      const yStart = y0 + (b.top    ? INSET : 0);
+      const yEnd   = y0 + CELL - (b.bottom ? INSET : 0);
+
+      // Leave a gap near the top-left corner for the cage sum label.
+      const cage = game.cages[game.cageOf[r][c]];
+      const isLabel = cage && cage.labelCell[0] === r && cage.labelCell[1] === c;
+
+      if (b.top && xStart < xEnd) {
+        const sx = isLabel ? xStart + LABEL_GAP : xStart;
+        if (sx < xEnd) pathParts.push(`M${sx},${y0 + INSET}H${xEnd}`);
+      }
+      if (b.bottom && xStart < xEnd) {
+        pathParts.push(`M${xStart},${y0 + CELL - INSET}H${xEnd}`);
+      }
+      if (b.left && yStart < yEnd) {
+        const sy = isLabel ? yStart + LABEL_GAP : yStart;
+        if (sy < yEnd) pathParts.push(`M${x0 + INSET},${sy}V${yEnd}`);
+      }
+      if (b.right && yStart < yEnd) {
+        pathParts.push(`M${x0 + CELL - INSET},${yStart}V${yEnd}`);
+      }
     }
   }
 
