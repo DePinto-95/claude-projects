@@ -119,22 +119,13 @@
     }
 
     /* Standard 3×3 box thick borders — both sides of each internal divider */
-    .cell.box-top    { border-top: 3px solid var(--accent); }
-    .cell.box-left   { border-left: 3px solid var(--accent); }
-    .cell.box-right  { border-right: 3px solid var(--accent); }
-    .cell.box-bottom { border-bottom: 3px solid var(--accent); }
+    .cell.box-top    { border-top: 3px solid #ffffff; }
+    .cell.box-left   { border-left: 3px solid #ffffff; }
+    .cell.box-right  { border-right: 3px solid #ffffff; }
+    .cell.box-bottom { border-bottom: 3px solid #ffffff; }
 
-    /* Killer cage dashed borders */
-    .cell.cage-top    { border-top: 1px dashed #c8d0e0; }
-    .cell.cage-left   { border-left: 1px dashed #c8d0e0; }
-    .cell.cage-right  { border-right: 1px dashed #c8d0e0; }
-    .cell.cage-bottom { border-bottom: 1px dashed #c8d0e0; }
-
-    /* Box borders override cage borders */
-    .cell.box-top.cage-top       { border-top: 3px solid var(--accent); }
-    .cell.box-left.cage-left     { border-left: 3px solid var(--accent); }
-    .cell.box-right.cage-right   { border-right: 3px solid var(--accent); }
-    .cell.box-bottom.cage-bottom { border-bottom: 3px solid var(--accent); }
+    /* Killer cage borders rendered via inset box-shadow (set inline in JS)
+       so the red line sits a few px inside the cell edge, not on it. */
 
     .cell.given { color: var(--text); }
     .cell.user  { color: var(--cyan); }
@@ -581,13 +572,15 @@ function renderBoard() {
       if (r === 2 || r === 5) cell.classList.add('box-bottom');
       if (c === 2 || c === 5) cell.classList.add('box-right');
 
-      // Killer cage dashed borders
+      // Killer cage borders — inset box-shadow so red line sits inside the cell
       if (game.mode === 'killer') {
         const b = getCageBorders(r, c, game.cageOf);
-        if (b.top)    cell.classList.add('cage-top');
-        if (b.bottom) cell.classList.add('cage-bottom');
-        if (b.left)   cell.classList.add('cage-left');
-        if (b.right)  cell.classList.add('cage-right');
+        const shadows = [];
+        if (b.top)    shadows.push('inset 0 3px 0 0 #e94560');
+        if (b.bottom) shadows.push('inset 0 -3px 0 0 #e94560');
+        if (b.left)   shadows.push('inset 3px 0 0 0 #e94560');
+        if (b.right)  shadows.push('inset -3px 0 0 0 #e94560');
+        if (shadows.length) cell.style.boxShadow = shadows.join(', ');
 
         // Cage sum label (top-left cell of each cage)
         const cage = game.cages[game.cageOf[r][c]];
