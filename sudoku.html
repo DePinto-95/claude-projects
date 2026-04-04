@@ -66,14 +66,20 @@
     #hud {
       display: flex;
       align-items: center;
-      gap: 24px;
+      gap: 12px;
       background: var(--bg2);
       border: 2px solid var(--bg3);
       border-radius: 10px;
-      padding: 10px 24px;
+      padding: 10px 18px;
       font-size: 1.05rem;
-      min-width: 300px;
       justify-content: space-between;
+    }
+
+    #hud #notes-btn, #hud #erase-btn {
+      width: auto;
+      padding: 0 12px;
+      height: 36px;
+      font-size: 0.8rem;
     }
 
     #hud span { color: var(--accent); font-weight: bold; }
@@ -92,7 +98,25 @@
       border-radius: 8px;
       overflow: hidden;
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      position: relative;
     }
+
+    #message {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+      font-weight: bold;
+      color: var(--green);
+      letter-spacing: 6px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    #message.visible { display: flex; }
 
     #board {
       display: grid;
@@ -217,13 +241,6 @@
       color: var(--cyan);
     }
 
-    #message {
-      font-size: 1.3rem;
-      height: 1.6rem;
-      font-weight: bold;
-      color: var(--accent);
-      letter-spacing: 2px;
-    }
 
     #mode-hint {
       font-size: 0.75rem;
@@ -250,10 +267,13 @@
   <div>⏱ <span id="timer">0:00</span></div>
   <button id="new-game-btn" title="New Game">🔄</button>
   <div>✖ <span id="mistakes">0</span></div>
+  <button class="num-btn" id="notes-btn">✏ Notes</button>
+  <button class="num-btn" id="erase-btn">⌫ Erase</button>
 </div>
 
 <div id="board-wrap">
   <div id="board"></div>
+  <div id="message">SOLVED!</div>
 </div>
 
 <div id="numpad">
@@ -266,11 +286,8 @@
   <button class="num-btn" data-n="7">7</button>
   <button class="num-btn" data-n="8">8</button>
   <button class="num-btn" data-n="9">9</button>
-  <button class="num-btn" id="notes-btn">✏ Notes</button>
-  <button class="num-btn" id="erase-btn">⌫ Erase</button>
 </div>
 
-<div id="message"></div>
 <div id="mode-hint"></div>
 
 <script>
@@ -554,7 +571,7 @@ function startGame(mode) {
 
   document.getElementById('mistakes').textContent = '0';
   document.getElementById('timer').textContent = '0:00';
-  document.getElementById('message').textContent = '';
+  document.getElementById('message').classList.remove('visible');
   const isKiller = mode.startsWith('killer');
   const killerHints = {
     'killer-easy':   'Killer Easy — smaller cages, many with only one possible digit set.',
@@ -847,7 +864,7 @@ function enterDigit(d) {
   if (!game.notesMode && checkComplete()) {
     game.complete = true;
     clearInterval(game.timerInterval);
-    document.getElementById('message').textContent = 'SOLVED!';
+    document.getElementById('message').classList.add('visible');
   }
 }
 
