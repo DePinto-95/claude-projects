@@ -241,7 +241,9 @@
   <button class="diff-btn active" data-mode="easy">Easy</button>
   <button class="diff-btn"        data-mode="normal">Normal</button>
   <button class="diff-btn"        data-mode="hard">Hard</button>
-  <button class="diff-btn"        data-mode="killer">Killer</button>
+  <button class="diff-btn"        data-mode="killer-easy">Killer Easy</button>
+  <button class="diff-btn"        data-mode="killer-normal">Killer Normal</button>
+  <button class="diff-btn"        data-mode="killer-hard">Killer Hard</button>
 </div>
 
 <div id="hud">
@@ -373,23 +375,41 @@ function createPuzzle(solution, clueCount) {
 // ============================================================
 // [KILLER]
 // ============================================================
-function generateCages(solution) {
+
+// Returns how many distinct sets of `size` unique digits (1–9) sum to `sum`.
+// Used to detect "forced" cages that have only one possible digit combination.
+function countCombinations(size, sum) {
+  let count = 0;
+  (function go(start, rem, target) {
+    if (rem === 0) { if (target === 0) count++; return; }
+    for (let d = start; d <= 9; d++) {
+      if (d > target) break;
+      go(d + 1, rem - 1, target - d);
+    }
+  })(1, size, sum);
+  return count;
+}
+
+function generateCages(solution, killerDiff) {
+  // killerDiff: 'easy' | 'normal' | 'hard'
+  const maxCageSize = killerDiff === 'easy' ? 3 : killerDiff === 'normal' ? 4 : 5;
+  const isEasy      = killerDiff === 'easy';
+  const isNormal    = killerDiff === 'normal';
+
   const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
   // -1 = unassigned
   const cageOf = Array.from({length: 9}, () => Array(9).fill(-1));
   const cages   = [];
 
   // ── Step 1: grow cages in random cell order ──────────────────
-  // Each cage is flood-filled from a seed cell. The only constraint
-  // when picking the next cell to add is that its solution digit must
-  // not already appear anywhere in the current cage.
   const order = shuffle(Array.from({length: 81}, (_, i) => [Math.floor(i/9), i%9]));
 
   for (const [sr, sc] of order) {
     if (cageOf[sr][sc] !== -1) continue;          // already in a cage
 
     const idx        = cages.length;
-    const targetSize = 2 + Math.floor(Math.random() * 4); // 2–5
+    // Target size: easy → 2–3, normal → 2–4, hard → 2–5
+    const targetSize = 2 + Math.floor(Math.random() * (maxCageSize - 1));
     const cells      = [[sr, sc]];
     cageOf[sr][sc]   = idx;
 
@@ -397,8 +417,13 @@ function generateCages(solution) {
       // Digits already claimed by this cage
       const used = new Set(cells.map(([r, c]) => solution[r][c]));
 
+      // In easy mode: if the current cage is already forced, stop growing early
+      if (isEasy && cells.length >= 2) {
+        const curSum = cells.reduce((s, [r, c]) => s + solution[r][c], 0);
+        if (countCombinations(cells.length, curSum) === 1) break;
+      }
+
       // Collect unique adjacent candidates that introduce a fresh digit.
-      // Use a flat-index Set to guarantee no cell appears twice.
       const seen  = new Set();
       const valid = [];
       for (const [r, c] of cells) {
@@ -406,9 +431,9 @@ function generateCages(solution) {
           const nr = r + dr, nc = c + dc;
           const key = nr * 9 + nc;
           if (nr >= 0 && nr < 9 && nc >= 0 && nc < 9
-              && cageOf[nr][nc] === -1          // not yet assigned
-              && !used.has(solution[nr][nc])    // digit not already in cage
-              && !seen.has(key)) {              // not already listed
+              && cageOf[nr][nc] === -1
+              && !used.has(solution[nr][nc])
+              && !seen.has(key)) {
             seen.add(key);
             valid.push([nr, nc]);
           }
@@ -416,7 +441,26 @@ function generateCages(solution) {
       }
 
       if (!valid.length) break;
-      const [nr, nc] = valid[Math.floor(Math.random() * valid.length)];
+
+      // For easy/normal: prefer candidate cells that produce a forced-sum cage
+      let chosen;
+      if (isEasy || isNormal) {
+        const curSum = cells.reduce((s, [r, c]) => s + solution[r][c], 0);
+        const forcedCandidates = valid.filter(([nr, nc]) =>
+          countCombinations(cells.length + 1, curSum + solution[nr][nc]) === 1
+        );
+        // Easy: always pick forced candidate when available
+        // Normal: pick forced candidate ~60 % of the time
+        if (forcedCandidates.length > 0 && (isEasy || Math.random() < 0.6)) {
+          chosen = forcedCandidates[Math.floor(Math.random() * forcedCandidates.length)];
+        } else {
+          chosen = valid[Math.floor(Math.random() * valid.length)];
+        }
+      } else {
+        chosen = valid[Math.floor(Math.random() * valid.length)];
+      }
+
+      const [nr, nc] = chosen;
       cells.push([nr, nc]);
       cageOf[nr][nc] = idx;
     }
@@ -511,23 +555,27 @@ function startGame(mode) {
   document.getElementById('mistakes').textContent = '0';
   document.getElementById('timer').textContent = '0:00';
   document.getElementById('message').textContent = '';
-  document.getElementById('mode-hint').textContent =
-    mode === 'killer'
-      ? 'Cage sums shown top-left. No digit repeats within a cage.'
-      : '';
+  const isKiller = mode.startsWith('killer');
+  const killerHints = {
+    'killer-easy':   'Killer Easy — smaller cages, many with only one possible digit set.',
+    'killer-normal': 'Killer Normal — mixed cage sizes, some forced combinations.',
+    'killer-hard':   'Killer Hard — larger cages, multiple possible combinations. Good luck.',
+  };
+  document.getElementById('mode-hint').textContent = isKiller ? killerHints[mode] : '';
   document.getElementById('notes-btn').classList.remove('active');
 
   const solution = generateFullGrid();
   game.solution = solution;
 
-  if (mode === 'killer') {
-    const { cages, cageOf } = generateCages(solution);
+  if (isKiller) {
+    const killerDiff = mode.replace('killer-', ''); // 'easy' | 'normal' | 'hard'
+    const { cages, cageOf } = generateCages(solution, killerDiff);
     game.cages = cages;
     game.cageOf = cageOf;
     game.grid = Array.from({length: 9}, () => Array(9).fill(0));
     game.given = Array.from({length: 9}, () => Array(9).fill(false));
   } else {
-    game.cages = [];
+    game.cages  = [];
     game.cageOf = [];
     const puzzle = createPuzzle(solution, CLUE_COUNTS[mode]);
     game.grid = puzzle;
@@ -552,7 +600,7 @@ function checkComplete() {
     for (let c = 0; c < 9; c++)
       if (game.grid[r][c] !== game.solution[r][c]) return false;
 
-  if (game.mode === 'killer') {
+  if (game.mode.startsWith('killer')) {
     for (const cage of game.cages) {
       const digits = cage.cells.map(([r, c]) => game.grid[r][c]);
       if (digits.some(d => d === 0)) return false;
@@ -570,7 +618,7 @@ function isCellError(r, c) {
   // Check against solution
   if (v !== game.solution[r][c]) return true;
   // In killer mode, also check cage constraints
-  if (game.mode === 'killer') {
+  if (game.mode.startsWith('killer')) {
     const idx = game.cageOf[r][c];
     const cage = game.cages[idx];
     const filledDigits = cage.cells
@@ -603,7 +651,7 @@ function renderBoard() {
       if (c === 2 || c === 5) cell.classList.add('box-right');
 
       // Cage sum label for Killer mode (top-left cell of each cage)
-      if (game.mode === 'killer') {
+      if (game.mode.startsWith('killer')) {
         const cage = game.cages[game.cageOf[r][c]];
         if (cage && cage.labelCell[0] === r && cage.labelCell[1] === c) {
           const label = document.createElement('span');
@@ -628,7 +676,7 @@ function renderCageOverlay() {
   // Remove any previous overlay
   const old = document.getElementById('cage-overlay');
   if (old) old.remove();
-  if (game.mode !== 'killer') return;
+  if (!game.mode.startsWith('killer')) return;
 
   // Board pixel geometry: each cell is 56px, gap between cells is 1px
   const CELL = 56, GAP = 1, STRIDE = CELL + GAP, INSET = 5;
